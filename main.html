@@ -1,0 +1,627 @@
+<!-- Write some minimal initial html template-->
+<!DOCTYPE html>
+<html>
+  <style>
+      #debug-info {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      border: 1px solid black;
+      padding: 10px;
+      background-color: white;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      border: 1px solid black;
+      padding: 10px;
+      background-color: white;
+    }
+
+    #svgMain {
+      border: 1px solid black;
+    }
+  </style>
+  <head>
+    <title>Constraint Solver</title>
+  </head>
+  <body>
+    <!-- Import d3.js library-->
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.2/math.min.js"></script>
+<!-- Create a canvas to draw stuff in -->
+    <!-- Nice, now please a scripts section to tinker with javascript-->
+
+    <div id="debug-info"></div>   
+    <div id = "controls"></div>
+
+    <!-- Lets write a row of plots div with ids plot1, plot2, plot3, so they are displayed in a row-->
+    <div id="plots" style="display: flex; flex-direction: row;">
+      <div id="plot1" style="border: 1px solid black;"></div>
+      <div id="plot2" style="border: 1px solid black;"></div>
+      <div id="plot3" style="border: 1px solid black;"></div>
+
+
+    <script type="module">
+      
+      import {ConstraintDistance, ConstraintPin} from './constraints.js';
+      import {Drawer, Plot} from './drawing.js';
+      import {displayStateText} from './utils.js';
+
+
+  
+
+
+
+  function computeJacobians(constraints,xarray,varray){
+
+    // type checking, constraints,xarray,varray should be arrays
+    if (!Array.isArray(constraints) || !Array.isArray(xarray) || !Array.isArray(varray)){
+      throw new Error("constraints, xarray and varray should be arrays")
+    }
+    const nconstraints = constraints.length;
+    const nparticles = xarray.length;
+    const J = math.zeros(nconstraints, 2*nparticles,"sparse");
+    const dot_J = math.zeros(nconstraints, 2*nparticles,"sparse");
+
+    for (let i = 0; i < nconstraints; i++){
+      let constraint = constraints[i];
+      let constraint_particle_indices = constraint.getParticleIndices();
+      let jacobian_particles = constraint.getJacobianParticles(xarray);
+      let dot_jacobian_particles = constraint.getDotJacobianParticles(varray);
+
+      if (constraint_particle_indices.length !== jacobian_particles.length){
+        throw new Error("The number of particles in the constraint is not equal to the number of jacobian particles")
+      }
+      if (constraint_particle_indices.length !== dot_jacobian_particles.length){
+        throw new Error("The number of particles in the constraint is not equal to the number of dot jacobian particles")
+      }
+
+
+      for (let j = 0; j < constraint_particle_indices.length; j++){
+        let particle_index = constraint_particle_indices[j];
+        let jacobian_particle = jacobian_particles[j];
+        if (jacobian_particle.length !== 2){
+          throw new Error("The jacobian particle should have 2 components")
+        }
+        let jacobian_particle_x = jacobian_particle[0];
+        let jacobian_particle_y = jacobian_particle[1];
+        J.set([i, 2*particle_index], jacobian_particle_x);
+        J.set([i, 2*particle_index + 1], jacobian_particle_y);
+
+        let dot_jacobian_particle = dot_jacobian_particles[j];
+        if (dot_jacobian_particle.length !== 2){
+          throw new Error("The dot jacobian particle should have 2 components")
+        }
+        let dot_jacobian_particle_x = dot_jacobian_particle[0];
+        let dot_jacobian_particle_y = dot_jacobian_particle[1];
+        dot_J.set([i, 2*particle_index], dot_jacobian_particle_x);
+        dot_J.set([i, 2*particle_index + 1], dot_jacobian_particle_y);
+
+        
+      }
+    }
+
+    return [J, dot_J];
+  }
+    
+
+
+  //lets create the non dummy solve_constraints function
+  //With Baumgarte stabilization the differentiated constraint eq is dotJv+Ja+alpha*dotC+beta*C = 0
+  // Replacing a = M^{-1}(Fext + Fconstraint) and dotC = Jv we get dotJv + J(M^{-1}(Fext + Fconstraint)) + alpha*Jv + beta*C = 0
+//And Fconstraint = J^T*lambda, so we get dotJv + J(M^{-1}(Fext + J^T*lambda)) + alpha*Jv + beta*C = 0
+// so the resulting linear system to solve in A*lambda = b  where A = J*M^{-1}*J^T  and 
+//b = -dotJv - J*M^{-1}*Fext - alpha*Jv - beta*C
+// lets implement this
+function solve_constraints(J, dot_J, xarray, varray,
+                             external_forces, masses, constraints,
+                              alpha = 0.00, beta = 0.00){
+    
+    //lets do type checking, J,dot_J external forces mathjs matrices, xarray, varray, masses arrays
+    if (!math.isMatrix(J) || !math.isMatrix(dot_J) || !math.isMatrix(external_forces)){
+      throw new Error("J, dot_J and external_forces should be mathjs matrices")
+    }
+    if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
+      throw new Error("xarray, varray and masses should be arrays")
+    }
+    let nparticles = xarray.length;
+    let nconstraints = J.size()[0];
+    let M_inv = math.matrix(masses.map(mass=>[1/mass,1/mass])).reshape([-1]);//vx and vy have the same mass(same particle)
+    M_inv = math.diag(M_inv,"sparse");
+
+    let A = math.multiply(J, math.multiply(M_inv, math.transpose(J)));
+    //lets check shape of A, it should be [nconstraints,nconstraints]
+    if (A.size()[0] !== nconstraints || A.size()[1] !== nconstraints){
+      throw new Error("The A matrix should have the same number of constraints")
+    }
+    //lets compute b = -dot_J*varray - J*M_inv*external_forces - alpha*J*varray - beta*constraints
+    //Lets do it in parts and then sum
+    //first varray [nparticles,2] to matrix and flatten-> [2*nparticles]
+    //the same for external forces [nparticles,2] to matrix and flatten-> [2*nparticles]
+    //Get constraints_vals [nconstraints] from constraints
+
+    let constraints_vals = math.matrix(
+                                constraints.map(constraint => constraint.getConstraintValue(xarray))
+                                );
+    let vmatrix = math.flatten(varray);
+    external_forces =math.flatten(external_forces);
+    let part1 = math.multiply(dot_J, vmatrix);
+    let part2 = math.multiply(J, math.multiply(M_inv, external_forces));
+    let part3 = math.multiply(alpha, math.multiply(J, vmatrix));
+    let part4 = math.multiply(beta, constraints_vals).reshape([nconstraints,1]);
+
+
+    let b = math.add(math.add(part1, part2), math.add(part3, part4));
+    //all parts appear with a minus sign in the equation
+    b = math.multiply(b,-1);
+    let lagrange_multipliers = math.lusolve(A,b).reshape([-1]);
+    // lets create a dict-like object to store the results
+    let out_dict = {
+      lagrange_multipliers: lagrange_multipliers,
+      constraints_vals: constraints_vals,
+    }
+    return out_dict;
+    
+  }
+  class ConstantForce{
+    constructor(particle_indices, force){
+      this.particle_indices = particle_indices;
+      this.force = force;
+    }
+    getForceArray(xarray, varray, masses){
+      if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
+        throw new Error("xarray, varray and masses should be arrays")
+      }
+      let nparticles = xarray.length;
+      let nforces = this.particle_indices.length;
+      let force_matrix= math.zeros(nparticles,2,"sparse");
+      for (let i = 0; i < nforces; i++){
+        let particle_index = this.particle_indices[i];
+        let force = this.force;
+        let force_x = force[0];
+        let force_y = force[1];
+        force_matrix.set([particle_index, 0], force_x);
+        force_matrix.set([particle_index, 1], force_y);
+      }
+      return force_matrix.toArray();
+    }
+  }
+
+  class Gravity{
+    constructor(particle_indices,g = 9.8,direction = [0,-1]){
+      //1  is down in pixel  coords
+      this.g = g;
+      this.particle_indices = particle_indices;
+      this.direction = direction;
+    }
+    getForceArray(xarray, varray, masses){
+      //lets throw error if xarray, varray and masses are not arrays
+      if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
+
+        throw new Error("xarray, varray and masses should be arrays")
+      }
+      let nparticles = xarray.length;
+      let nforces = this.particle_indices.length;
+      let force_matrix = math.zeros(nparticles,2,"sparse");
+      for (let i = 0; i < nforces; i++){
+        let particle_index = this.particle_indices[i];
+        let mass = masses[particle_index];
+        let force = this.g*mass;
+        let force_x = force * this.direction[0];
+        let force_y = force * this.direction[1];
+        force_matrix.set([particle_index, 0], force_x);
+        force_matrix.set([particle_index, 1], force_y);
+      }
+      return force_matrix.toArray();
+    }
+  }
+
+
+  
+function computeExternalForces(forces,xarray,varray,masses){
+  let nparticles = xarray.length;
+  let external_forces = math.zeros(nparticles,2,"sparse");
+  for (let force of forces){
+    let ext_force = force.getForceArray(xarray, varray, masses);
+
+    external_forces = math.add(external_forces, ext_force); 
+  }
+  return external_forces;
+}
+
+
+function step(state,config, dt,alpha,beta){
+
+  let constraints = config.constraints;
+  let forces = config.forces;
+  let masses = config.masses;
+
+  let s = state;
+  let nparticles = s.xs.length;
+  let [J, dot_J] = computeJacobians(constraints,s.xs,s.vs);
+  let external_forces = computeExternalForces(forces, s.xs, s.vs, masses);
+  let out_solve_constraints = solve_constraints(J, dot_J, s.xs,
+                                                        s.vs, external_forces,
+                                                        masses, constraints,
+                                                        alpha,beta);//lagrange multipliers size [nconstraints]
+                                                        
+  let lagrange_multipliers = out_solve_constraints.lagrange_multipliers;
+  let constraint_vals = out_solve_constraints.constraints_vals; 
+  let constraint_forces = math.multiply(math.transpose(J), lagrange_multipliers).reshape([nparticles,2]);
+
+
+  //lets check shape constraint forces = [nparticles,2]
+
+  if (constraint_forces.size()[0] !== nparticles){
+    throw new Error("The constraint forces should have the same number of particles")
+  }
+
+  let farray = math.add(external_forces, constraint_forces);
+
+
+  // generate aarray value by dividing in a for loop each value of farray by the corresponding mass
+  let aarray = math.zeros(nparticles,2);
+  for (let i = 0; i < nparticles; i++){
+    let mass = masses[i];
+    let force_x = farray.get([i,0]);
+    let a_x = force_x / mass;
+    let force_y = farray.get([i,1]);
+    let a_y = force_y / mass;
+    aarray.set([i,0], a_x);
+    aarray.set([i,1], a_y);
+  }
+  let vmatrix = math.matrix(s.vs);
+  let xmatrix = math.matrix(s.xs);
+  let new_varray = math.add(vmatrix, math.multiply(aarray, dt));
+  let new_xarray = math.add(xmatrix, math.multiply(new_varray, dt));
+
+  let new_state = {
+    J:J.toArray(),
+    dot_J: dot_J.toArray(),
+    xs: new_xarray.toArray(),
+    vs: new_varray.toArray(),
+    lagrange_multipliers: lagrange_multipliers.toArray(),
+    external_forces: external_forces.toArray(),
+    constraint_forces: constraint_forces.toArray(),
+    aarray: aarray.toArray(),
+    total_forces: farray.toArray(),
+    constraint_vals: constraint_vals.toArray(),
+  }
+  return new_state;
+}
+
+
+// lets abstract the dumbell configuration into a class for generic systems
+// the methods that all systems will have are getConstraintsInfo, getConfig, getState, getStateHistory, steps
+// getConstraintsInfo will gather constraint info useful for drawing
+// getConfig will have the configurational info, constraints, forces, masses.
+// the state will be a dict with xs, vs, external_forces, constraint_forces
+
+class System{
+
+    // lets throw an error if the instance doesnt have a series of attributes and methods
+    // the mandatory attributes are state state_history forces, constraints, constraints_distance, constraints_pin,
+    //masses alpha beta 
+  checkProperties(){
+    if (!this.state || !this.state_history || !this.forces || !this.constraints
+     || !this.constraints_distance || !this.constraints_pin 
+     || !this.masses || !this.alpha || !this.beta){
+      throw new Error("The instance should have the attributes state, state_history, forces, constraints, constraints_distance, constraints_pin, masses, alpha, beta")
+    }
+
+
+  // lets check types: state dict, state_history array of dicts, forces array, constraints array,
+  //constraints_distance array, constraints_pin array, masses array, alpha number, beta number
+
+  if (typeof this.state !== "object" || !Array.isArray(this.state_history) 
+    || !Array.isArray(this.forces) || !Array.isArray(this.constraints) 
+    || !Array.isArray(this.constraints_distance) || !Array.isArray(this.constraints_pin) 
+    || !Array.isArray(this.masses) || typeof this.alpha !== "number" || typeof this.beta !== "number"){
+    throw new Error("The instance should have the attributes state dict, state_history array of dicts, forces array, constraints array, constraints_distance array, constraints_pin array, masses array, alpha number, beta number")
+  }
+
+}
+
+calculateCOM(xs,masses){
+  //xs array of particle possitions
+   if (xs.length !== masses.length){
+      throw new Error("The xs and masses arrays should have the same length")
+    }
+  if (xs[0].length !== 2){
+    throw new Error("The xs array should have 2 components")
+  }
+  let total_mass = masses.reduce((a,b)=>a+b,0);
+  let weighted_xs = xs.map((x,i)=>math.multiply(masses[i]/total_mass,x));
+  let COM = weighted_xs.reduce((a,b)=>math.add(a,b),math.zeros(2));
+
+    
+    return COM;
+  }
+
+  calculateKineticEnergy(vs,masses){
+    if (vs.length !== masses.length){
+      throw new Error("The xs and masses arrays should have the same length")
+    }
+  if (vs[0].length !== 2){
+    throw new Error("The xs array should have 2 components")
+  }
+    //Ekin = 0.5*v^{T}Mv
+    let nparticles = vs.length;
+    let M = math.matrix(masses.map(mass=>[mass,mass])).reshape([-1]);//vx and vy have the same mass(same particle)
+    M = math.diag(M);
+    let v_matrix = math.flatten(math.matrix(vs));
+
+    let Ekin = 0.5*math.multiply(math.transpose(v_matrix),math.multiply(M,v_matrix));
+    return Ekin;
+  }
+
+
+  getConfig(){
+    return {
+      constraints: this.constraints,
+      forces: this.forces,
+      masses: this.masses,
+      //radiuses: this.radiuses,
+
+    }
+  }
+
+  getConstraintsInfo(){
+          // utils function used by the drawing function
+          // for the constraints_distance it must extract particle indices
+          // and the distance value
+          // for the constraints_pin it must extract the particle index
+          // pin point and distance value
+          // it must return a nested dict {constraints_distance:{particle_indices:[],distance:[]},...}
+          let constraints_info = {};
+          let cd = this.constraints_distance;
+          let cp = this.constraints_pin;
+          // lets insert below code under if statements to check if the array is not empty
+          let cd_info = {};
+          let cp_info = {};
+          if (cd.length === 0){
+            //pass
+        }
+          else {
+            cd_info = {
+            particle_indices: cd.map(constraint=>constraint.getParticleIndices()),
+            distances: cd.map(constraint=>constraint.distance),
+          };
+          constraints_info["constraints_distance"] = cd_info;
+          }
+
+          if (cp.length === 0){
+            //pass
+          }
+          else {
+            cp_info = {
+            particle_indices: cp.map(constraint=>constraint.getParticleIndices()),
+            pin_points: cp.map(constraint=>constraint.getPinPoint()),
+            distances: cp.map(constraint=>constraint.distance),
+          };
+          constraints_info["constraints_pin"] = cp_info;
+
+          }
+
+
+          return constraints_info;
+          }
+
+    steps(n,dt, save = false){
+      this.checkProperties();
+      let config = this.getConfig();
+      for (let i =0;i<n; i++){
+        console.log(i)
+
+        let new_state = step(this.state,config,dt,this.alpha,this.beta);
+        this.state = new_state;
+        if (save){
+          this.state_history.push(new_state);
+        }
+      }
+    }
+}
+
+//lets create a dumbell system class that inherits from the system class
+// the dumbell system will have a constructor that will take the distance, w, masses, alpha, beta
+
+class DumbellSystem extends System{
+  constructor(distance, w, masses = [1,1], alpha = 0.00, beta = 0.00){
+      super();
+      this.w = w;
+      this.alpha = alpha;
+      this.beta = beta;
+      let nparticles = 2;
+      //lets compute the radiuses to give this masses ( pi*r^2 = particle_density*mass_particle)
+      this.radiuses = masses.map(mass=>Math.sqrt(mass/particle_density/Math.PI));
+      let xs_o = [[-distance/2,0],[distance/2,0]];
+      this.xs_o = xs_o;
+      // to get the initial vs we need to calculate the COM and the velocities of the particles
+      // COm is the weighted average of the positions
+
+      let COM = this.calculateCOM(xs_o,masses)
+      let r1_o = math.subtract(xs_o[0],COM);
+      let r2_o = math.subtract(xs_o[1],COM);
+
+      let v1_o = math.multiply(w,[-r1_o.get([1]),r1_o.get([0])]); //|w|(-dy,dx)
+      let v2_o = math.multiply(w,[-r2_o.get([1]),r2_o.get([0])]);
+      let vs_o = [v1_o,v2_o];
+
+      let constraints_distance = [new ConstraintDistance(0,1,distance)];
+      let constraints_pin = [];
+      let constraints = constraints_distance.concat(constraints_pin);
+      let forces = [];
+
+      let state = {
+        xs: xs_o,
+        vs: vs_o,
+        external_forces: math.zeros(nparticles,2).toArray(),
+        constraint_forces: math.zeros(nparticles,2).toArray(),
+        }
+
+        this.constraints_distance = constraints_distance;
+        this.constraints_pin = constraints_pin;
+        this.state = state;
+        this.constraints = constraints;
+        this.forces = forces;
+        this.masses = masses;
+        this.state_history = [state];
+
+        this.checkProperties();
+
+        }
+
+  analyticalSolution(tarray){
+    // analytical solution for simple systems, in this case we'll have 
+    // x1 = R(\theta)r1_{o} + COM
+    // x2 = R(\theta)r2_{o} + COM
+    // where R(\theta) is the rotation matrix and \theta = wt
+    // r1_{o} and r2_{o} are the initial positions of the particles (this.r1, this.r2)
+    // COM is the center of mass
+
+    let COM = this.calculateCOM(this.xs_o,this.masses)
+    let r1_o = math.subtract(this.xs_o[0],COM);
+    let r2_o = math.subtract(this.xs_o[1],COM);
+    let w = this.w;
+    let R = (theta) => math.matrix([[Math.cos(theta),-Math.sin(theta)],[Math.sin(theta),Math.cos(theta)]]);
+    let x1 = tarray.map(t=>math.add(math.multiply(R(w*t),r1_o),COM));
+    let x2 = tarray.map(t=>math.add(math.multiply(R(w*t),r2_o),COM));
+    return [x1,x2];
+  }
+
+}
+
+// lets make a pendulum system class that inherits from the system class
+
+class PendulumSystem extends System{
+  constructor(L,mass,alpha = 0.00, beta = 0.00, g = 9.8){
+    super();
+    this.g = g;
+    this.alpha = alpha;
+    this.beta = beta;
+    this.L = L;
+    this.masses = [mass];
+    this.pin_point = [0,0];
+    let angle_0_grad = 30.;
+    this.angle_0_rad = math.unit(angle_0_grad,"deg").toNumber("rad");
+    this.r_o = [[L*Math.sin(this.angle_0_rad)+this.pin_point[0],
+              -L*Math.cos(this.angle_0_rad)+this.pin_point[1]]];
+    this.v_o = [[0,0]];
+    this.constraints_distance = [];
+    this.constraints_pin = [new ConstraintPin(0,this.pin_point,L)];
+    this.constraints = this.constraints_distance.concat(this.constraints_pin);
+
+    this.forces = [new Gravity([0], this.g,[0,-1])];//args particle indices, g, direction
+    let external_forces_o = computeExternalForces(this.forces, this.r_o, this.v_o, this.masses);
+    let state = {
+      xs: this.r_o,
+      vs: this.v_o,
+      external_forces: external_forces_o.toArray(),
+      constraint_forces: math.zeros(1,2).toArray(),
+    }
+    this.state = state;
+    this.state_history = [state];
+    this.checkProperties();
+
+
+  }
+
+
+}
+
+function createSlider(min,max,value,step){
+  var slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = min;
+  slider.max = max;
+  slider.values = value;
+  slider.step = step;
+  var controlsDiv = document.getElementById("controls");
+  controlsDiv.appendChild(slider);
+  return slider;
+}
+
+function sliderCallback(slider,system, drawer){
+  let idx = slider.value;
+  let state = system.state_history[idx];
+  drawer.drawState(state, system)
+  displayStateText(state,"debug-info");
+
+}
+
+
+
+
+
+const particle_density =  0.001;// just for drawing purposes
+const width = 800;
+const height = 800;
+const svg = d3.select('body')
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height)
+        .attr("id","svgMain")
+
+window.onload = function(){
+      let alpha = 0.010;
+      let beta = 0.010;
+     // let system = new DumbellSystem(0.5,1,[1,1],alpha,beta);
+      let system = new PendulumSystem(0.5,0.1,alpha,beta,1);// args L,mass,alpha,beta,g
+      let nsteps =2000;
+      let T = 30;
+      let dt = T/nsteps;
+      window.system = system;
+      console.log(dt)
+      system.steps(nsteps,dt,true);
+      
+      window.svg = svg;
+      let drawer = new Drawer(svg,width,height,particle_density);
+      let slider = createSlider(0,nsteps,0,1);
+      slider.addEventListener("input",function(){
+        sliderCallback(slider,system,drawer);
+      });
+
+      let tarray = Array.from({length: nsteps}, (_, i) => i*dt);
+
+      //DumbelResultsPlotting(system,tarray);
+      function DumbelResultsPlotting(dumbell,tarray){
+        let plot1 = new Plot("plot1","axis_plot1","t")
+        //xarray is the time array, 0 to 10 with nsteps points
+        let x_coord_particle_1_array = dumbell.state_history.map(state=>state.xs[0][0]);
+        let y_coord_particle_1_array = dumbell.state_history.map(state=>state.xs[0][1]);
+        plot1.plotLine(tarray,x_coord_particle_1_array,"black","x_coord_1");
+        //plot1.plotLine(tarray,y_coord_particle_1_array,"red","y_coord_1");
+
+
+        let plot2 = new Plot("plot2","axis_plot2","t")
+        // lets plot the constraint forces module on particle one over time
+        let constraint_forces_module_particle_1 = dumbell.
+                                                  state_history.
+                                                  map(state=>math.norm(state.constraint_forces[0]));
+        let constraint_forces_module_particle_2 = dumbell.
+                                                  state_history.
+                                                  map(state=>math.norm(state.constraint_forces[1]));     
+        plot2.plotLine(tarray,constraint_forces_module_particle_1,"blue","constraint_forces_module_particle_1");
+        plot2.plotLine(tarray,constraint_forces_module_particle_2,"red","constraint_forces_module_particle_2");
+
+        let [x1a,x2a] = dumbell.analyticalSolution(tarray);
+        let x_coord_particle_1_array_a = x1a.map(x=>x.get([0]));
+        plot1.plotLine(tarray,x_coord_particle_1_array_a,"green","x_coord_1_analytical");
+
+        let Ekin  = tarray.map((t,i) =>dumbell.calculateKineticEnergy(dumbell.state_history[i].vs,dumbell.masses));
+        let plot3 = new Plot("plot3","axis_plot3","t")
+        plot3.plotLine(tarray,Ekin,"green","Ekin");
+      }
+
+}
+    </script>
+
+    <script>
+
+    </script>
+  </body>
+</html>
