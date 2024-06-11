@@ -1,4 +1,5 @@
 
+
 /**
  * Slices a given matrix according to the provided slices.
  *
@@ -112,7 +113,7 @@ function capDecimalsArray(array, decimals = 3) {
   }
 
 
-  function displayObjectInDiv(obj, div_output_id, id_prefix="text_debug"){
+  function displayObjectInDiv(obj, div_output_id, id_prefix = ""){
     /*
     Display the object in a div with the id div_output_id
     Info displayed in a new paragraph in the parent div with div_output_id with id_prefix_key
@@ -128,15 +129,20 @@ function capDecimalsArray(array, decimals = 3) {
     let entries = obj instanceof Map ? obj.entries() : Object.entries(obj);
   
     for (let [key, value] of entries){
-      let idchild = `#${id_prefix}_${key}`
+      let idchild = `#${id_prefix}-${key}`
       let childElement = parentDiv.querySelector(idchild)
       if (childElement){
-        childElement.textContent = `${key}: ${value}`;
+        let valueStr = JSON.stringify(value);
+        childElement.textContent = `${key}: ${valueStr}`;
       }
       else{
         let newP = document.createElement("p");
-        newP.id = `${id_prefix}_${key}`;
-        newP.textContent = `${key}: ${value}`;
+        if (id_prefix !== ""){
+          id_prefix = div_output_id;
+        }
+        newP.id = `${id_prefix}-${key}`;
+        let valueStr = JSON.stringify(value);
+        newP.textContent = `${key}: ${valueStr}`;
         parentDiv.appendChild(newP);
       }
     }

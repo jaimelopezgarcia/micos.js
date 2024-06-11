@@ -1,6 +1,11 @@
 
 
-function drawParticles(svg, xarray, rarray,id_particle, color = "red"){
+
+const DEBUG = true;
+
+
+function drawParticlesOld(svg, xarray, rarray,id_particle,
+                           color = "red"){
   // xarray is a [Nparticles, 2] array, rarray is a [Nparticles] array, lets throw an error if they have different lengths
   if (xarray.length != rarray.length){
     throw new Error("xarray and rarray must have the same length");
@@ -13,14 +18,14 @@ function drawParticles(svg, xarray, rarray,id_particle, color = "red"){
   }
   // lets add the class particle +"_id_particle" and we do the selectall over this class
   // to avoid selecting all the circles in the svg
-  let particles = svg.selectAll(".particle_"+id_particle).data(data);
+  let particles = svg.selectAll(".particle"+"_"+id_particle).data(data);
 
   particles.enter().append("circle")
-  .attr("class", "particle_"+id_particle)
+  .attr("class", "particle_circle")
   .attr("cx", d => d.x)
   .attr("cy", d => d.y)
   .attr("r", d => d.r)
-  .attr("id", d => "particle-"+d.idx)
+  .attr("id", d => "particle"+"_"+d.idx)
   .style("fill", color);
 
   particles.attr("cx", d => d.x)
@@ -34,7 +39,7 @@ function drawParticles(svg, xarray, rarray,id_particle, color = "red"){
   let text = svg.selectAll(".particle_text_"+id_particle).data(data);
 
   text.enter().append("text")
-  .attr("class", "particle_text_"+id_particle)
+  .attr("class", "particle_text")
   .attr("x", d => d.x)
   .attr("y", d => d.y)
   .attr("text-anchor", "middle")
@@ -51,6 +56,54 @@ function drawParticles(svg, xarray, rarray,id_particle, color = "red"){
   return particles;
 
 }
+
+// Lets write again drawParticles but with several improvements
+// We'll get  rid of svg.selectAll and instead we create a group for the circles and text
+
+function drawParticles(svgd3, xs, radii, groupParticlesId,color = "red") {
+    // Create or select the group for all particles
+    let particlesGroup = svgd3.selectAll(`#${groupParticlesId}`)
+        .data([null]) // dummy data
+        .join("g")
+        .attr("id", groupParticlesId);
+      let data = [];
+        for (let i = 0; i < xs.length; i++){
+          data.push({x: xs[i][0], y: xs[i][1], r: radii[i],idx: i});
+        }
+    // Bind data to existing particle groups
+    let particles = particlesGroup.selectAll(".particle")
+        .data(data);
+
+    // Handle new particles (enter)
+    let newParticles = particles.enter()
+        .append("g")
+        .attr("class", "particle")
+        .attr("id", d => `${groupParticlesId}_particle_${d.idx}`);
+
+    newParticles.append("circle");
+    newParticles.append("text");
+
+    particles = newParticles.merge(particles);
+
+
+
+    // Update existing particles (update)
+    particles.select("circle")
+        .attr("cx", (d, i) => d.x)
+        .attr("cy", (d, i) => d.y)
+        .attr("r", (d, i) => d.r)
+        .attr("fill", color);
+
+    particles.select("text")
+        .attr("x", (d, i) => d.x)
+        .attr("y", (d, i) => d.y)
+        .text((d, i) => `${i}`);
+
+    // Remove old particles (exit)
+    particles.exit().remove();
+  }
+
+
 
 // This function will draw the constraints between the particles
 function drawDistanceConstraints(svg, xarray, constraints_idxs,constraints_distances,
@@ -198,15 +251,25 @@ function drawPinConstraints(svg, xarray, constraints_idxs,
 
 
 
-
-
-
 function drawArrow(svg, x1, y1, x2, y2, arrowId,class_name = "arrow", color="black") {
-    // Define the arrowhead marker
-    // lets group line and head into a svg group
+
     // lets remove the arrow if it already exists
-    svg.append("defs").append("marker")
-    .attr("id", arrowId)
+    svg.select(`#${arrowId}`).remove();
+    // lets group line and head into a svg group
+    let arrow = svg.append("g").attr("id",arrowId);
+    // Draw a line with the arrowhead marker
+    arrow.append("line")
+        .attr("x1", x1)
+        .attr("y1", y1)
+        .attr("x2", x2)
+        .attr("y2", y2)
+        .attr("stroke-width", 2)
+        .attr("stroke", color)
+        .attr("class", class_name)
+        .attr("id", `${arrowId}_line`);
+    // Define the arrowhead marker
+    arrow.append("defs").append("marker")
+    .attr("id", `${arrowId}_head`)
     .attr("viewBox", "0 -5 10 10")
     .attr("refX", 5)
     .attr("refY", 0)
@@ -216,130 +279,101 @@ function drawArrow(svg, x1, y1, x2, y2, arrowId,class_name = "arrow", color="bla
     .append("path")
     .attr("d", "M0,-5L10,0L0,5")
     .attr("class", class_name)
-    .attr("fill", color);
-    svg.select(`#${arrowId}_line`).remove();
+    .attr("fill", color)
+    .attr("id", `${arrowId}_head`);
+    // lets add the marker to the line
+    arrow.select("line").attr("marker-end", `url(#${arrowId}_head)`);
+
+    }
 
 
 
-    // Draw a line with the arrowhead marker
-    svg.append("line").attr("id", `${arrowId}_line`)
-        .attr("x1", x1)
-        .attr("y1", y1)
-        .attr("x2", x2)
-        .attr("y2", y2)
-        .attr("stroke-width", 2)
-        .attr("stroke", color)
-        .attr("marker-end", `url(#${arrowId})`);
-        }
-
-
-function drawState(state,system, svg){
-  // draw the particles
-
-  let config = system.getConfig();
-  drawParticles(svg, state["xs"], config.masses, "particle", "red");
-  // draw the distance constraints
-  let constraints_info = system.getConstraintsInfo()
-  //constraints_info is an object that might have 2 entries, constraints_distance and constraints
-  // if there is constraints_distance we extract particle_indices,distances from this entry
-  // if there is constraints_pin, we extract particle_indices,distances,pin_points from this entry
-  // and we call drawDistanceConstraints and drawPinConstraints if they exist
-  if (constraints_info.hasOwnProperty("constraints_distance")){
-    let cd = constraints_info["constraints_distance"];
-
-    drawDistanceConstraints(svg, state["xs"], cd.particle_indices, cd.distances,
-                            "constraint", "black");
-  }
-
-  if (constraints_info.hasOwnProperty("constraints_pin")){
-    let cp = constraints_info["constraints_pin"];
-    drawPinConstraints(svg, state["xs"], cp.particle_indices, cp.pin_points, cp.distances, "constraint", "black");
-  }
-
-  
-  for (let i = 0; i<state["external_forces"].length;i++){
-    let [x1,y1] = state["xs"][i];
-    let x2 = x1 + state["external_forces"][i][0];
-    let y2 = y1 + state["external_forces"][i][1];
-    let arrowid = "external_forces_" + i;
-    let class_name = "arrow_external_forces";
-    drawArrow(svg,x1,y1,x2,y2,arrowid,class_name, "blue");
-  }
-
-  for (let i = 0; i<state["constraint_forces"].length;i++){
-    let [x1,y1] = state["xs"][i];
-    let x2 = x1 + state["constraint_forces"][i][0];
-    let y2 = y1 + state["constraint_forces"][i][1];
-    let arrowid = "constraint_forces_" + i;
-    let class_name = "arrow_constraint_forces";
-    drawArrow(svg,x1,y1,x2,y2,arrowid,class_name, "yellow");
-  }
-}
 
 
 
-// lets make a Plot class to handle 1d line plots
-  // the idea is that the axis are lazy created, when the first plot is called
-  class Plot {
-    constructor(div_id, axis_id, x_label = "", y_label = "") {
+  class Plot{
+    constructor(div_id, axis_id,
+       x_label = "", y_label = "", width = 500, height = 500) {
       this.div_id = div_id;
       this.axis_id = axis_id;
-      this.svg = null;
+      this.svg = null; // lazy creation when first plot is called
       this.xScale = null;
       this.yScale = null;
       this.x_label = x_label;
       this.y_label = y_label;
       this.legendPosition = 0;// we'll increment it for each plot
-   
+      this.width = width;
+      this.height = height;
+      //lets create a list of colors to cycle through if color is not provided
+      this.colors = ["black", "blue", "red", "green", "purple", "orange", "brown", "gray", "pink", "cyan", "magenta"];
+      this.counter = 0;
     }
     createAxis(div_id, axis_id, x_domain, y_domain, x_label = "", y_label=""){
+
+      
       this.svg = d3.select(`#${div_id}`)
           .append('svg')
-          .attr('width', 500)
-          .attr('height', 500)
+          .attr('width', this.width)
+          .attr('height', this.height)
           .attr('id', axis_id);
+
+    
+
+      
+
+      this.xScale = d3.scaleLinear()
+        .domain(x_domain)
+        .range([50, this.width - 50]);
+
+      this.yScale = d3.scaleLinear()
+        .domain(y_domain)
+        .range([this.height - 50, 50]);
+
+      this.svg.append('g')
+        .attr('transform', `translate(0, ${this.height - 50})`)
+        .call(d3.axisBottom(this.xScale));
+
+      this.svg.append('g')
+        .attr('transform', `translate(50, 0)`)
+        .call(d3.axisLeft(this.yScale));
+
+      this.svg.append('text')
+        .attr('x', this.width / 2)
+        .attr('y', this.height - 10)
+        .text(x_label)
+        .style('text-anchor', 'middle');
+
+      this.svg.append('text')
+        .attr('x', -this.height / 2)
+        .attr('y', 20)
+        .text(y_label)
+        .attr('transform', 'rotate(-90)')
+        .style('text-anchor', 'middle');
+    
   
-        this.xScale = d3.scaleLinear()
-          .domain(x_domain)
-          .range([50, 450]);
-  
-        this.yScale = d3.scaleLinear()
-          .domain(y_domain)
-          .range([450, 50]);
-  
-        this.svg.append('g')
-          .attr('transform', 'translate(0, 450)')
-          .call(d3.axisBottom(this.xScale));
-  
-        this.svg.append('g')
-          .attr('transform', 'translate(50, 0)')
-          .call(d3.axisLeft(this.yScale));
-  
-        this.svg.append('text')
-          .attr('x', 250)
-          .attr('y', 490)
-          .text(x_label)
-          .style('text-anchor', 'middle');
-  
-        this.svg.append('text')
-          .attr('x', -250)
-          .attr('y', 20)
-          .text(y_label)
-          .attr('transform', 'rotate(-90)')
-          .style('text-anchor', 'middle');
-  
-  
-      }
-    plotLine(xarray, yarray, color = "black", label = "") {
+
+    }
+    plotLine(xarray, yarray,label = "", color = null) {
       // lets first check if svg is null, if it is not, we plot, if it is, we create axis
       if (this.svg === null) {
         //lets get the x and y domain with extent
+        if (DEBUG){
+          console.log("Plotting for the first time, creating axis for div_id", this.div_id)
+        }
         let xdomain = d3.extent(xarray);
         let ydomain = d3.extent(yarray);
         this.createAxis(this.div_id, this.axis_id, 
                        xdomain, ydomain, this.x_label, this.y_label);
       
       }
+      if (color === null){
+        color = this.colors[this.counter];
+        this.counter = (this.counter + 1) % this.colors.length;
+        if (DEBUG){
+          console.log("Color not provided, using color", color)
+        }
+      }
+
   
       let line = d3.line()
       .x(d => this.xScale(d.x))
@@ -360,7 +394,7 @@ function drawState(state,system, svg){
       // lets add the label to the legend
   
       this.svg.append("rect")
-      .attr("x", 460)
+      .attr("x", this.width - 40)
       .attr("y", 45 + this.legendPosition)
       .attr("width", 10)
       .attr("height", 10)
@@ -368,7 +402,7 @@ function drawState(state,system, svg){
   
   
       this.svg.append("text")
-      .attr("x", 500)
+      .attr("x", this.width - 20)
       .attr("y", 50 + this.legendPosition)
       .text(label)
       .style("text-anchor", "middle")
@@ -380,13 +414,164 @@ function drawState(state,system, svg){
   
   
   
-  
-  
     }
-  }
+    clearPlot(){
+      this.svg.selectAll("*").remove();
+      this.svg = null;
+      this.legendPosition = 0;
+    }
+    }
   
 
-  class Drawer{
+
+function drawForces(STATE, svg){
+
+      //lets throw an error if the forces are not in the state and output the missing forces
+      let name_forces = ["external_forces", "constraint_forces", "contact_forces", "friction_forces"];
+      let missing_forces = name_forces.filter(name => !STATE.hasOwnProperty(name));
+      if (missing_forces.length > 0){
+          throw new Error("Missing forces in STATE: " + missing_forces);
+      }
+
+      // error if state missing xs
+      if (!STATE.hasOwnProperty("xs")){
+          throw new Error("Missing xs in STATE");
+      }
+
+      
+      let fext = STATE.external_forces;
+      let fconstraint = STATE.constraint_forces;
+      let fcontact = STATE.contact_forces;
+      let ffriction = STATE.friction_forces;
+      let xs = STATE.xs;
+      for (let i = 0; i < xs.length; i++){
+          let [x,y] = xs[i];
+          let [fx, fy] = fext[i];
+          drawArrow(svg, x, y, x+fx, y+fy, "arrow_fext_" + i, "arrow fext", "blue");
+          [fx, fy] = fconstraint[i];
+          drawArrow(svg, x, y, x+fx, y+fy, "arrow_fconstraint_" + i, "arrow fconstraint", "green");
+          [fx, fy] = fcontact[i];
+          drawArrow(svg, x, y, x+fx, y+fy, "arrow_fcontact_" + i, "arrow fcontact", "red");
+          [fx, fy] = ffriction[i];
+          drawArrow(svg, x, y, x+fx, y+fy, "arrow_ffriction_" + i, "arrow ffriction", "purple");
+      }
+  }
+
+
+  function drawConstraints(STATE, svg){
+    /*
+    *   Function to draw the constraints in the svg
+    *   The constraints are in the STATE object
+    *  The constraints are of 2 types, distance and pin
+    * The distance constraints are of the form [idx1, idx2, distance]
+    * The pin constraints are of the form [idx, [x,y], distance]
+    */
+    let isConsDistEmpty = STATE.constraints_distance.length === 0;
+    let isConsPinEmpty = STATE.constraints_pin.length === 0;
+    let xs = STATE.xs;
+    if (!isConsDistEmpty){
+      let constraints_distance = STATE.constraints_distance;
+      let distances1 = constraints_distance.map(constraint => constraint[2]);
+      let constraints_idxs1 = constraints_distance.map(constraint => [constraint[0], constraint[1]]);
+      drawDistanceConstraints(svg, xs, constraints_idxs1, distances1, "distance_constraints", "black");
+    }
+    if (!isConsPinEmpty){
+      let constraints_pin = STATE.constraints_pin;
+      let constraints_idxs2 = constraints_pin.map(constraint => constraint[0]);
+      let pinpoints = constraints_pin.map(constraint => constraint[1]);
+      let distances2 = constraints_pin.map(constraint => constraint[2]);
+      drawPinConstraints(svg, xs, constraints_idxs2, pinpoints, distances2, "pin_constraints", "black");
+    }
+    
+}
+
+
+function plotStateStoryPositionsVelocities(ParentDivId,STATE_STORY, VISUAL_OPTIONS){
+
+  let parentDiv = document.getElementById(ParentDivId);
+  let tarray = STATE_STORY.map(state => state.time);
+  
+  let nparticles = STATE_STORY[0].xs.length;
+  let y_names = ["xplot", "yplot", "vxplot", "vyplot"];
+  let div_plots_ids = [];
+
+  for (let y_name of y_names){
+      let plot_id = ParentDivId + "-" + y_name;
+      let div = parentDiv.querySelector("#" + plot_id);
+      if (div==null){
+          div = document.createElement("div");
+          div.id = plot_id;
+          parentDiv.appendChild(div);
+      }
+      div_plots_ids.push(div.id);
+
+  }
+  
+  // we need 4 plots, on each plot we'll plot all particles
+  let tracesx = [];
+  let tracesy = [];
+  let tracesvx = [];
+  let tracesvy = [];
+  for (let i = 0; i < nparticles; i++){
+      let trace_x = {
+          x: tarray,
+          y: STATE_STORY.map(state => state.xs[i][0]),
+          mode: "lines",
+          name: "particle_" + i + "_x",
+      }
+      let trace_y = {
+          x: tarray,
+          y: STATE_STORY.map(state => state.xs[i][1]),
+          mode: "lines",
+          name: "particle_" + i + "_y",
+      }
+      let trace_vx = {
+          x: tarray,
+          y: STATE_STORY.map(state => state.vs[i][0]),
+          mode: "lines",
+          name: "particle_" + i + "_vx",
+      }
+      let trace_vy = {
+          x: tarray,
+          y: STATE_STORY.map(state => state.vs[i][1]),
+          mode: "lines",
+          name: "particle_" + i + "_vy",
+      }
+      tracesx.push(trace_x);
+      tracesy.push(trace_y);
+      tracesvx.push(trace_vx);
+      tracesvy.push(trace_vy);
+  }
+
+  let layout = {
+      title: "State Story",
+      xaxis: {
+          title: "time",
+      },
+      yaxis: {
+          title: "value",
+      },
+      width: VISUAL_OPTIONS["width_plots"],
+      height: VISUAL_OPTIONS["height_plots"],
+      margin: {
+          l: 10,
+          r: 10,
+          b: 20,
+          t: 20,
+          pad: 4,
+      }
+  }
+
+  Plotly.newPlot(div_plots_ids[0], tracesx, layout);
+  Plotly.newPlot(div_plots_ids[1], tracesy, layout);
+  Plotly.newPlot(div_plots_ids[2], tracesvx, layout);
+  Plotly.newPlot(div_plots_ids[3], tracesvy, layout);
+
+ 
+}
+
+
+  class DrawerOLD{
     constructor(svg, width, height, particle_density){
       this.svg = svg;
       this.width = width;
@@ -530,4 +715,218 @@ function drawState(state,system, svg){
   
     }
   }
-export { drawArrow, drawParticles, drawDistanceConstraints, drawPinConstraints, drawState, drawCross, Plot, Drawer};
+
+
+  class Drawer{
+    /*
+
+    Lets make some changes, lets extract width and height from the svg dynamically
+    */
+    constructor(svg, x_model_domain = [-1,1], y_model_domain = [-1,1], origin_model = [0,0]){
+      this.svg = svg;// html dom, not d3
+      this.x_model_domain = x_model_domain;
+      this.y_model_domain = y_model_domain;
+      this.origin_model = origin_model;
+
+    }
+
+    getCanvasDimensions(){
+      let width = this.svg.clientWidth;
+      let height = this.svg.clientHeight;
+      let origin_canvas = [width/2,height/2];// canvas point where the origin will be placed
+      let scale_factor_x = width/(this.x_model_domain[1] - this.x_model_domain[0]);
+      let scale_factor_y = -height/(this.y_model_domain[1] - this.y_model_domain[0]);//negative because in svg y grows down
+
+      return [width,height,origin_canvas,scale_factor_x,scale_factor_y];
+    }
+    model2Canvas(array, shift = false){
+      //lets check type, array is [N,2] model data is expected to be O(1)
+      //shift is an optional parameter because coord points will be shifted by the origin but forces will not ( second derivative of the position)
+      if (!Array.isArray(array)){
+        throw new Error("Array should be an array")
+      }
+      if (array[0].length === 0){
+        throw new Error("Array must be of shape [N,2]")
+      }
+
+      let [width,height,origin_canvas,scale_factor_x,scale_factor_y] = this.getCanvasDimensions();
+  
+      let array_canvas = array.map(point => {
+        let x = point[0];
+        let y = point[1];
+        let origin_model  = [0,0];
+        if (shift){
+          origin_model  = [this.origin_model[0],this.origin_model[1]];
+          origin_canvas = [origin_canvas[0],origin_canvas[1]];
+        }
+        else{
+          origin_model  = [0,0];
+          origin_canvas = [0,0];
+        }
+        let x_canvas = (x + origin_model[0]) * scale_factor_x + origin_canvas[0];
+        let y_canvas = (y + origin_model[1]) * scale_factor_y + origin_canvas[1];
+        return [x_canvas,y_canvas];
+      } );
+  
+      return array_canvas;
+    }
+    canvas2Model(array,shift = false){
+      //lets check type, array is [N,2] 
+      if (!Array.isArray(array)){
+        throw new Error("Array should be an array")
+      }
+      if (array[0].length === 0){
+        throw new Error("Array must be of shape [N,2]")
+      }
+
+      let [width,height,origin_canvas,scale_factor_x,scale_factor_y] = this.getCanvasDimensions();
+  
+      let array_model = array.map(point => {
+        let x_canvas = point[0];
+        let y_canvas = point[1];
+        let origin_model  = [0,0];
+        if (shift){
+          origin_model  = [this.origin_model[0],this.origin_model[1]];
+          origin_canvas = [origin_canvas[0],origin_canvas[1]];
+        }
+        else{
+          origin_model  = [0,0];
+          origin_canvas = [0,0];
+        }
+        let x = (x_canvas - origin_canvas[0]) / scale_factor_x + origin_model[0];
+        let y = (y_canvas - origin_canvas[1]) / scale_factor_y + origin_model[1];
+        return [x,y];
+      });
+  
+      return array_model;
+    
+    }
+  
+    _calculateDistance(point1, point2){
+      // constraint distances are calculated in the model domain, we cant turn the distance model scalar
+      // into canvas distance, we need the points in the canvas domain
+      return Math.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2);
+  
+  
+    }
+  
+
+  
+    _masses2Radiuses(masses, particle_density){
+      let radiuses = masses.map(mass=>Math.sqrt(mass/particle_density/Math.PI));
+      return radiuses;
+    }
+
+    state2Canvas(STATE){
+      // Here we transform the different magnitudes in STATE to canvas coordinates, we must generate a twin canvasSTATE object
+      //lets start by deep copying the STATE object
+      // positions are transformed with  shift = true, forces and velocities are transformed with shift = false
+
+      let canvasSTATE = JSON.parse(JSON.stringify(STATE));
+      canvasSTATE.xs = this.model2Canvas(STATE.xs,true);
+      canvasSTATE.vs = this.model2Canvas(STATE.vs,false);
+      canvasSTATE.external_forces = this.model2Canvas(STATE.external_forces,false);
+      canvasSTATE.constraint_forces = this.model2Canvas(STATE.constraint_forces,false);
+      canvasSTATE.contact_forces = this.model2Canvas(STATE.contact_forces,false);
+      canvasSTATE.friction_forces = this.model2Canvas(STATE.friction_forces,false);
+
+      //we need to transform constraints data, constraints_distance is a list of [idx1,idx2,distance]
+      // we need to recalculated the distance in canvas coordinates
+      let canvasConstraintsDistance = canvasSTATE.constraints_distance.map(constraint => {
+        let [idx1,idx2,distance] = constraint;
+        //we need to get in model coordinates [dx,dy] calculate the current distance ( not equal to the distance in the constraint unless the constraint is satisfied)
+        //get the point at distance/currendistance * [dx,dy] from point1 and transform it to canvas coordinates
+        //once this is done we calculate distance_canvas
+        let point1 = STATE.xs[idx1];
+        let point2 = STATE.xs[idx2];
+        let dx = point2[0] - point1[0];
+        let dy = point2[1] - point1[1];
+        let current_distance = Math.sqrt(dx**2 + dy**2);
+        let ratio = distance/current_distance;
+        let canvasdr = this.model2Canvas([[ratio*dx,ratio*dy]],false)[0];
+        let distance_canvas = Math.sqrt(canvasdr[0]**2 + canvasdr[1]**2);
+
+        return [idx1,idx2,distance_canvas];
+      });
+
+      canvasSTATE.constraints_distance = canvasConstraintsDistance;
+
+      // now the same for the pin constraints points and distances
+      let canvasConstraintsPin = canvasSTATE.constraints_pin.map(constraint => {
+        let [idx,pinpoint,distance] = constraint;
+        // we employ the same strategy, we calculate the distance in model coordinates, then we calculate the point at distance from the particle
+        // and we transform it to canvas coordinates
+        let point1 = STATE.xs[idx];
+        let dx = pinpoint[0] - point1[0];
+        let dy = pinpoint[1] - point1[1];
+        let current_distance = Math.sqrt(dx**2 + dy**2);
+        let ratio = distance/current_distance;
+        let canvasdr = this.model2Canvas([[ratio*dx,ratio*dy]],false)[0];
+        let distance_canvas = Math.sqrt(canvasdr[0]**2 + canvasdr[1]**2);
+        let canvasPinPoint = this.model2Canvas([pinpoint],true)[0];
+        
+
+        return [idx,canvasPinPoint,distance_canvas];
+      });
+
+      canvasSTATE.constraints_pin = canvasConstraintsPin;
+
+      return canvasSTATE;
+
+
+    }
+
+    drawState(STATE, VISUAL_OPTIONS, particles_group_id){
+      let s = STATE;
+      let svgd3 = d3.select(this.svg);
+      let particle_density = VISUAL_OPTIONS["particle_density"];
+      let radii = s.masses.map(mass => Math.sqrt(mass/particle_density));
+      
+      let canvasSTATE = this.state2Canvas(s);
+
+      //lets draw particles
+      drawParticles(svgd3, canvasSTATE.xs, radii, particles_group_id, "red");
+      //lets draw forces
+      drawForces(canvasSTATE, svgd3);
+      //lets draw constraints
+      drawConstraints(canvasSTATE, svgd3);
+  
+
+    }
+    //lets draw a scale reference in a corner of the svg, a square with a side of 0.1 in model coordinates
+    drawScaleReference(){
+      //lets write down the square in model coords and then we transform it to canvas coords
+      //lets draw it in the top left corner, using relative measure to this.y_model_domain and this.x_model_domain
+      let square_model = [[0,0],[0.1,0],[0.1,0.1],[0,0.1],[0,0]];
+      //lets shift it in the model coords to the top left corner, top left corner is this.x_model_domain[0], this.y_model_domain[1]
+      let square_model_shifted = square_model.map(point => [point[0] + this.x_model_domain[0]+0.2, point[1] + this.y_model_domain[1]-0.2]);
+      //lets transform it to canvas coords
+      let square_canvas = this.model2Canvas(square_model_shifted,true);
+      //lets draw the square
+      let svgd3 = d3.select(this.svg);
+      svgd3.append("path")
+      .datum(square_canvas)
+      .attr("fill", "none")
+      .attr("stroke", "black")
+      .attr("stroke-width", 1)
+      .attr("d", d3.line()
+      .x(d => d[0])
+      .y(d => d[1])
+      .curve(d3.curveLinearClosed));
+      //lets add a text with the scale, lets add some informative text to the right of the square
+      svgd3.append("text")
+      .attr("x", square_canvas[0][0]+20)
+      .attr("y", square_canvas[0][1]+10)
+      .attr("fill", "brown")
+      .attr("font-size", "12px")
+      .attr("text-anchor", "middle")
+      .attr("alignment-baseline", "middle")
+      .text("0.1 square model units");
+
+
+
+    }
+
+  }
+export { drawArrow, drawParticles, drawDistanceConstraints,
+   drawPinConstraints, drawCross, drawForces,drawConstraints,plotStateStoryPositionsVelocities , Plot, Drawer};
