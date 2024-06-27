@@ -60,6 +60,7 @@
             "particle_density": 0.01,
             "width_plots": 400,
             "height_plots": 400,
+            "scale_arrows_forces":1,
 
         };
 
@@ -103,7 +104,8 @@
     <script type = "module">
         import {drawParticles, drawForces, drawConstraints, plotStateStoryPositionsVelocities, Drawer} from './drawing.js'
         import {displayObjectInDiv} from './utils.js'
-        import {stepSemiEuler} from './solver.js'
+        import {stepTestSemiEuler, stepSemiEulerNonContact, pendulumSystemConfig,chainSystemConfig,
+            doublePendulumSystemConfig, initState } from './solver.js'
 
         function resetStory(){
             STATE_STORY = [];
@@ -122,7 +124,7 @@
             let STATE_COPY = JSON.parse(JSON.stringify(STATE));
             STATE_STORY.push(STATE_COPY);
             //lets include max 20 states in the story
-            if (STATE_STORY.length > 20){
+            if (STATE_STORY.length > 60){
                 STATE_STORY.shift();
             }
             let states_story_slider = document.getElementById("states-story");
@@ -134,24 +136,36 @@
 
         }
         
+        function _updateStateWithParameters(STATE, PARAMETERS){
+            // I want State to have a complete explicit description that completely determines dynamics
+            //but there will be some redundancy with parameters
+            // So a compromise is to have a function that updates the state with the parameters
+            // for things like gravity, damping, etc
+
+            //By now we'll update gravity with the parameter g ( the first index of the gravity entry associated value)
+
+            // this is a little hacky, so lets make a reminder debug console.log
+            if (DEBUG){
+                console.log("UPDATING STATE WITH PARAMETERS, THIS WILL ONLY UPDATE STATE ON  THE UPDATE STATE CALLBACKS, NOT THE PARAMETERS CALLBACKS");
+            }
+
+            let g = PARAMETERS.g;
+            STATE["gravity"][0] = g;
+        }
         function updateState(key, value){
             STATE[key] = value;
+            _updateStateWithParameters(STATE, PARAMETERS);
             OBSERVERS_STATE.forEach(observer => observer(STATE));
 
         }
 
-        function replaceState(new_state, initialize = false){
-            for (let key in new_state){
-                if (initialize==false){//if we are not initializing we need to check if the key is in the STATE object
-                    if (STATE[key] == undefined){
-                        throw new Error("State " + key + " is not defined in the STATE object");
-                    }
-                }
-                STATE[key] = new_state[key];
-            }
+
+        function replaceState(new_state){
+
+            STATE = new_state;
+            _updateStateWithParameters(STATE, PARAMETERS);
             OBSERVERS_STATE.forEach(observer => observer(STATE));
         }
-
 
  
 
@@ -251,9 +265,19 @@
     //on window load
     window.onload = function(){
 
-
-        let new_state = dummyState();
-        replaceState(new_state, true);
+       // let stepFunction = stepTestSemiEuler;
+        let stepFunction = stepSemiEulerNonContact;
+        //let new_state = dummyState();
+        let [thetaO, omegaO, g, L, mass] = [Math.PI/4, 0, 9.81, 0.5, 1];
+        let new_state_ = pendulumSystemConfig(thetaO, omegaO, g, L,mass);
+        //let [thetaO1, omegaO1, thetaO2, omegaO2, g, L1, L2, mass1, mass2] = [Math.PI/4, 0, Math.PI/4+0.5, 0, 9.81, 0.25, 0.25, 1, 1];
+        //let new_state_ = doublePendulumSystemConfig(thetaO1, omegaO1, thetaO2, omegaO2, g, L1, L2, mass1, mass2);
+        //let [nparticles,g,L,mass,angle] = [35,9.81,0.2,1,Math.PI/4];
+        //let new_state_ = chainSystemConfig(nparticles,g,L,mass,angle);
+        window.new_state_ = new_state_;
+        let new_state = initState(new_state_,PARAMETERS);// initialization of all forces 
+        window.STATE = new_state;
+        replaceState(new_state);
         let PARTICLES_GROUP_ID = "particles_group";
         //drawState(SVG,STATE, PARTICLES_GROUP_ID);
         drawer1.drawState(STATE, VISUAL_OPTIONS, PARTICLES_GROUP_ID);
@@ -288,7 +312,7 @@
             }
             addStateToStory(STATE, STATE_STORY);
             //stepEuler(STATE, PARAMETERS);
-            let newState = stepSemiEuler(STATE, PARAMETERS);
+            let newState = stepFunction(STATE, PARAMETERS);
             replaceState(newState);
 
             drawer.drawState(STATE, VISUAL_OPTIONS, PARTICLES_GROUP_ID);

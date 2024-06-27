@@ -1,3 +1,5 @@
+import {getSvgRelativeCoords} from "./utils.js";
+
 const DEBUG = true;
 
 
@@ -100,9 +102,121 @@ function populateParametersPanel(PARAMETERS, id_panel, OBSERVERS_PARAMETERS){
 
 
 
+function makeParticleDraggable(SVG,particle_id, particle_idx,
+                                STATE,updateState,canvas2Model, callbacks = [],
+                                ){
+    /*
+    *   Function to make a particle draggable
+    *  Assumes that the particle is a circle with a text element inside
+    *  And the particle_id last part is the particle_idx
+    * STATE must have a xs key with the positions of the particles
+    * updateState is a function to update the state, intended to channel all STATE updates
+    * canvas2Model must be a function to convert canvas to model coordinates
+    * It must have signature canvas2Model(pointsCanvas) -> pointsModel arrays of [npoints, 2]
+    */
+    //lets throw an error if the number after the last _ in the id doesnt match the particle_idx
+    let split_id = particle_id.split("_");
+    let particle_number = split_id[split_id.length-1];
+    if (particle_number != particle_idx){
+        throw new Error(`particle_number ${particle_number} does not match particle_idx ${particle_idx}`);
+    }
+    let particle = document.getElementById(particle_id);
+    //lets throw an error if the particle is not found
+    if (particle === null){
+        throw new Error("Particle not found with id " + particle_id);
+    }
+    particle.addEventListener("mousedown", function(event){
+        event.preventDefault();
+        let [xabs, yabs] = [event.clientX, event.clientY];
+        let [xsvg, ysvg] = getSvgRelativeCoords(SVG, xabs, yabs);
+
+        function mouseMoveCallback(event){
+            let [xabs, yabs] = [event.clientX, event.clientY];
+            let [xsvg, ysvg] = getSvgRelativeCoords(SVG, xabs, yabs);
+            particle.querySelector("circle").setAttribute("cx", xsvg);
+            particle.querySelector("circle").setAttribute("cy", ysvg);
+            particle.querySelector("text").setAttribute("x", xsvg);
+            particle.querySelector("text").setAttribute("y", ysvg);
+
+            let [xnewCanvas, ynewCanvas] =[xsvg, ysvg]
+            let [xnewModel, ynewModel] = canvas2Model([[xnewCanvas, ynewCanvas]])[0];
+            let xs = STATE.xs;
+            xs[particle_idx] = [xnewModel, ynewModel];
+            updateState("xs", xs,STATE);
+        }
+        function mouseUpCallback(event){
+
+            for (let callback of callbacks){
+                callback();
+            }
+            
+            if (DEBUG){
+                console.log("UPDATED POSITIONS PARTICLE", particle_idx, JSON.stringify(STATE.xs));
+            }   
+            SVG.removeEventListener("mousemove", mouseMoveCallback);
+            SVG.removeEventListener("mouseup", mouseUpCallback);
+        }
+        SVG.addEventListener("mousemove", mouseMoveCallback);
+        SVG.addEventListener("mouseup", mouseUpCallback);
+    })
+
+}
+
+function makeCircleDraggable(SVG, particle_id,
+                                updateCallback, 
+                                 canvas2Model,
+                                  callbacks = []){
+                /*
+                *   A more general version of makeParticleDraggable
+                * The updating logic is handled by the updateCallback function declared in the parent scope
+                * It must have signature updateCallback(point) 
+                */
+                //lets throw an error if the number after the last _ in the id doesnt match the particle_idx
+                let split_id = particle_id.split("_");
+                let particle_idx = split_id[split_id.length-1];
+
+                
+                let particle = document.getElementById(particle_id);
+                //lets throw an error if the particle is not found
+                if (particle === null){
+                throw new Error("Particle not found with id " + particle_id);
+                }
+                particle.addEventListener("mousedown", function(event){
+                event.preventDefault();
+                let [xabs, yabs] = [event.clientX, event.clientY];
+                let [xsvg, ysvg] = getSvgRelativeCoords(SVG, xabs, yabs);
+
+                function mouseMoveCallback(event){
+                    let [xabs, yabs] = [event.clientX, event.clientY];
+                    let [xsvg, ysvg] = getSvgRelativeCoords(SVG, xabs, yabs);
+                    particle.querySelector("circle").setAttribute("cx", xsvg);
+                    particle.querySelector("circle").setAttribute("cy", ysvg);
+                    particle.querySelector("text").setAttribute("x", xsvg);
+                    particle.querySelector("text").setAttribute("y", ysvg);
+
+                    let [xnewCanvas, ynewCanvas] =[xsvg, ysvg]
+                    let [xnewModel, ynewModel] = canvas2Model([[xnewCanvas, ynewCanvas]])[0];
+                        
+                    let point = [xnewModel, ynewModel];
+                    updateCallback(point);
+                }
 
 
+                function mouseUpCallback(event){
 
+                for (let callback of callbacks){
+                callback();
+                }
+
+      
+                SVG.removeEventListener("mousemove", mouseMoveCallback);
+                SVG.removeEventListener("mouseup", mouseUpCallback);
+                }
+                SVG.addEventListener("mousemove", mouseMoveCallback);
+                SVG.addEventListener("mouseup", mouseUpCallback);
+                })
+
+}
 
 export {populateVisualOptionsPanel, populateParametersPanel,
-        updateParameters, replaceParameters,updateVisualOptions};
+        updateParameters, replaceParameters,updateVisualOptions,makeParticleDraggable, makeCircleDraggable};

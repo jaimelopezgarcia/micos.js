@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Physics Solver Testing</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.4/math.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+
+<style>
+    /*
+    * lets make a grid of 2 columns main_canvas/plots_panel, and plots_panel will have all its child divs in a row with a scrollbar for 
+    * overflow
+    */
+
+    body{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .main_canvas{
+        display: grid;
+        grid-template-rows: 1fr 1fr;
+        grid-gap: 10px;
+        padding: 10px;
+    }
+
+    .svg{
+        border: 1px solid black;
+        width: 400px;
+        height: 400px;
+    }
+
+    .slider{
+        width: 100%;
+    }
+
+
+    .plots_panel{
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        grid-gap: 10px;
+        padding: 10px;
+        overflow: auto;
+    }
+
+</style>
+<body>
+    <script type = "module">
+    import {integrateSystem, pendulumSystemConfig, doublePendulumSystemConfig,initState} from "./solver.js";
+    import {Drawer} from "./drawing.js"; //drawer.drawState(STATE,VISUAL_OPTIONS,particles_group_id); is the function to draw the state of the system
+    import {calculateCOM, calculateKineticEnergy} from "./solver.js";
+    import {pendulumAnalyticalSolution} from "./solver.js";//pendulumAnalyticalSolution(thetaO, g, L, tarray) returns [xs,vs]
+        // I'll be testing the solver against some toy models with analytical solutions
+        // so for each model we'll need a small dashboard associated.
+        // because it will be created for each model, is better to create a js function to create the dashboard
+        // it must have a main canvas, below the main canvas a slider to select the timestep of the story of states
+        // and next to the main canvas a panel where I'll generate custom plots for each model
+        //the plots in this panel should be appended in a single row 
+
+        function createModelPanels(model_name){
+            // if there is already a model panel with model_name id, throw an error
+            // The slider will have id model_name + "_slider"
+            // the main canvas will have id model_name + "_canvas"
+            // the plots panel will have id model_name + "_plots_panel" 
+            //Lets add a svg and the slider in the same main canvas div
+            // styling will be in <styles> here we just add proper class names
+
+            // create the main canvas
+            var main_canvas = document.createElement("div");
+            main_canvas.id = model_name + "_canvas";
+            main_canvas.className = "main_canvas";
+            document.body.appendChild(main_canvas);
+
+            // Slider and svg inside main_canvas
+            var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.id = model_name + "_svg";
+            //lets set width and height of the svg
+            svg.setAttribute("width", 400);
+            svg.setAttribute("height", 400);
+            main_canvas.appendChild(svg);
+
+            var slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = 0;
+            slider.max = 100;
+            slider.value = 0;
+            slider.id = model_name + "_slider";
+            slider.className = "slider";
+            main_canvas.appendChild(slider);
+
+
+
+            var plots_panel = document.createElement("div");
+            plots_panel.id = model_name + "_plots_panel";
+            plots_panel.className = "plots_panel";
+            document.body.appendChild(plots_panel);
+ 
+        }
+
+        function plotStateStoryPendulumSolver(stateStory, model_name){
+
+            let timeArray = stateStory.map(s => s.time);
+            let angles = stateStory.map(s => Math.atan2(s.xs[0][1], s.xs[0][0]));
+            let kineticEnergies = stateStory.map(s => calculateKineticEnergy(s.vs, s.masses));
+            let constraintForces = stateStory.map(s => math.norm(s.constraint_forces[0]));
+            let constraintVals = stateStory.map(s => s.constraints_vals[0]);
+
+            let parentDiv = document.getElementById(model_name + "_plots_panel");
+
+            let divAngles = document.createElement("div");
+            // lets set width and height of the div
+
+            divAngles.id = "divAngles";
+            parentDiv.appendChild(divAngles);
+            let divKE = document.createElement("div");
+            divKE.id = "divKE";
+            parentDiv.appendChild(divKE);
+            let divCF = document.createElement("div");
+            divCF.id = "divCF";
+            parentDiv.appendChild(divCF);
+            let divCV = document.createElement("div");
+            divCV.id = "divCV";
+            parentDiv.appendChild(divCV);
+
+            let traceAngles = {
+                x: timeArray,
+                y: angles,
+                mode: "lines",
+                name: "Angle",
+            };
+
+            let traceKE = {
+                x: timeArray,
+                y: kineticEnergies,
+                mode: "lines",
+                name: "Kinetic Energy",
+            };
+
+            let traceCF = {
+                x: timeArray,
+                y: constraintForces,
+                mode: "lines",
+                name: "Constraint Forces",
+            };
+
+            let traceCV = {
+                x: timeArray,
+                y: constraintVals,
+                mode: "lines",
+                name: "Constraint Values",
+            };
+
+            //layouts, with title, and width height 400 px
+
+            let layout_angle = {
+                title: "Angle vs Time",
+                width: 400,
+                height: 400,
+            };
+
+            let layout_ke = {
+                title: "Kinetic Energy vs Time",
+                width: 400,
+                height: 400,
+            };
+
+            let layout_cf = {
+                title: "Constraint Forces vs Time",
+                width: 400,
+                height: 400,
+            };
+
+            let layout_cv = {
+                title: "Constraint Values vs Time",
+                width: 400,
+                height: 400,
+            };
+
+
+
+
+            let dataAngles = [traceAngles];
+            let dataKE = [traceKE];
+            let dataCF = [traceCF];
+            let dataCV = [traceCV];
+
+            Plotly.newPlot("divAngles", dataAngles, layout_angle);
+            Plotly.newPlot("divKE", dataKE, layout_ke);
+            Plotly.newPlot("divCF", dataCF, layout_cf);
+            Plotly.newPlot("divCV", dataCV, layout_cv);
+
+
+
+        }
+
+
+        function plotAnalyticalSolutionPendulum(thetaO, g, L, tarray, model_name){
+            let [xs, vs] = pendulumAnalyticalSolution(thetaO, g, L, tarray);
+            console.log(xs)
+            let angles = [];
+            for(let i = 0; i < xs.length; i++){
+                angles.push(Math.atan2(xs[i][1], xs[i][0]));
+            }
+            console.log(angles)
+            let kineticEnergies = vs.map(v => 0.5 * L**2 * v**2);
+            let parentDiv = document.getElementById(model_name + "_plots_panel");
+
+            let divAngles = document.createElement("div");
+            // lets set width and height of the div
+
+            divAngles.id = "divAngles";
+            divKE.id = "divKE";
+
+            let traceAngles = {
+                x: tarray,
+                y: angles,
+                mode: "lines",
+                name: "Angle ground truth",
+            };
+
+            let traceKE = {
+                x: tarray,
+                y: kineticEnergies,
+                mode: "lines",
+                name: "Kinetic Energy ground truth",
+            };
+
+            //The plots will be created already with the solver solution, so we have to append traces to them
+            // lets  append traces to avoid overwriting, Plotly.addTraces
+            // layouts have already been created, so we just need to append traces
+
+            let dataAngles = [traceAngles];
+            let dataKE = [traceKE];
+
+            Plotly.addTraces("divAngles", dataAngles);
+            Plotly.addTraces("divKE", dataKE);
+
+
+
+           
+
+
+
+        }
+
+        
+
+        function pendulum(thetaO, omegaO, g, L, mass, TIME, PARAMETERS, VISUAL_OPTIONS){
+            let pendulumSTATE0 = pendulumSystemConfig(thetaO, omegaO, g, L, mass);
+            pendulumSTATE0 = initState(pendulumSTATE0, PARAMETERS);//this calculates forces
+            let nsteps = TIME/PARAMETERS.dt;
+            let pendulumStateStory = integrateSystem(pendulumSTATE0, PARAMETERS, nsteps);
+            plotStateStoryPendulumSolver(pendulumStateStory, "pendulum");
+            //tarray is a [0,dt,2dt,...,TIME]
+            let tarray = [];
+            for(let i = 0; i < nsteps; i++){
+                tarray.push(i*PARAMETERS.dt);
+            }
+            console.log(tarray)
+            plotAnalyticalSolutionPendulum(thetaO, g, L, tarray, "pendulum");
+            let pendulumSVG = document.getElementById("pendulum_svg");
+            let drawerPendulum =new Drawer(pendulumSVG,[-2,2],[-2,2]);
+            let pendulumParticlesGroupId = "pendulum_particles"
+            drawerPendulum.drawState(pendulumSTATE0, VISUAL_OPTIONS, pendulumParticlesGroupId);
+            //lets add a callback to the slider
+            let slider = document.getElementById("pendulum_slider");
+            // lets set min and max values of the slider
+            slider.min = 0;
+            slider.max = nsteps - 1;
+            slider.addEventListener("input", function(){
+
+                let index = parseInt(this.value);
+                drawerPendulum.drawState(pendulumStateStory[index], VISUAL_OPTIONS, pendulumParticlesGroupId);
+            });
+        }
+
+
+    let PARAMETERS = {"dt": 0.01, "alpha":1,"beta":1};
+    let VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":1};
+
+     window.onload = function(){
+        createModelPanels("pendulum");  
+        let [thetaO, omegaO, g, L, mass, TIME] = [Math.PI/12, 0, 9.8, 1, 1, 30];
+        pendulum(thetaO, omegaO, g, L, mass, TIME, PARAMETERS, VISUAL_OPTIONS);
+     }
+        
+    </script>
+</body>
+</html>

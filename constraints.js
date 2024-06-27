@@ -4,6 +4,10 @@ class ConstraintDistance {
       this.idx2 = particle2_idx;
       this.distance = distance;
     }
+
+    getType() {
+      return "distance";
+    }
   
     getParticleIndices() {
       return [this.idx1, this.idx2];
@@ -30,9 +34,14 @@ class ConstraintDistance {
 
 
   
-    getConstraintValue(xarray) {
-      // C(x) = current_distance(x)-distance
-      return this.getDistanceParticles(xarray) - this.distance;
+    getConstraintValue(xarray,squared = true) {
+      // C(x) = current_distance(x)**2-distance**2
+      if(squared){
+        return this.getDistanceParticles(xarray)**2 - this.distance**2;
+      }
+      else{
+        return this.getDistanceParticles(xarray) - this.distance;
+      }
     }
   
     getJacobianParticles(xarray){
@@ -71,6 +80,10 @@ class ConstraintPin {
       this.pin_point = pin_point;
       this.distance = distance;
     }
+
+    getType() {
+        return "pin";
+    }
     
     getPinPoint() {
         return this.pin_point;
@@ -82,6 +95,8 @@ class ConstraintPin {
     distfunc(x1, y1, x2, y2) {
         return Math.sqrt((x2-x1)**2 + (y2-y1)**2);
     }
+
+
     getDistancePoint(xarray) {
     // lets throw an error if xarray 2 dimension is not 2
     if (xarray[0].length != 2){
@@ -95,9 +110,14 @@ class ConstraintPin {
         let y2 = this.pin_point[1];
         return this.distfunc(x1, y1, x2, y2);
     }
-    getConstraintValue(xarray) {
-        // C(x) = current_distance(x)-distance
-        return this.getDistancePoint(xarray) - this.distance;
+    getConstraintValue(xarray, squared = true) {
+        // C(x) = current_distance(x)**2-distance**2
+        if (squared){
+            return this.getDistancePoint(xarray)**2 - this.distance**2;
+        }
+        else{
+            return this.getDistancePoint(xarray) - this.distance;
+        }
         }
 
     getJacobianParticles(xarray){

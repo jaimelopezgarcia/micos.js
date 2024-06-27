@@ -1,0 +1,379 @@
+/*
+Math utils js module
+
+This module needs mathjs to be loaded in the html file
+
+Collection of math utility functions, coordinate transformations etc
+Lets write a minimalistic description of the functions in this module, signature and usage
+
+translate(points, shift)
+    points is a [npoints, 2] array
+    shift is a [2] array
+    returns a [npoints, 2] array of points translated by shift
+
+rotate(points, angle, center, angle_unit="deg")
+    points is a [npoints, 2] array
+    angle is in radians
+    center is a [2] array
+    angle_unit is "deg" or "rad"
+    returns a [npoints, 2] array of points rotated by angle around center
+
+rotateCOM(points, angle, angle_unit="deg")
+
+    points is a [npoints, 2] array
+    angle is in radians
+    returns a [npoints, 2] array of points rotated by angle around the center of mass of points
+
+model2Canvas(pointsModel, originModel, canvasX, canvasY, modelX, modelY)
+    pointsModel is a [npoints, 2] array
+    originModel is a [2] array, usually [0, 0] but we might want to reference shifted axis in the model space
+    returns a [npoints, 2] array of points transformed from model to canvas coordinates
+    canvasX, canvasY are the dimensions of the canvas (usually the canvas.width and canvas.height)
+    modelX, modelY are the dimensions of the model space (usually [-1,1]x[-1,1])
+
+canvas2Model(pointsCanvas, originModel, canvasX, canvasY, modelX, modelY)
+    pointsCanvas is a [npoints, 2] array
+    originModel is a [2] array, usually [0, 0] but we might want to reference shifted axis in the model space
+    returns a [npoints, 2] array of points transformed from canvas to model coordinates
+    canvasX, canvasY are the dimensions of the canvas (usually the canvas.width and canvas.height)
+    modelX, modelY are the dimensions of the model space (usually [-1,1]x[-1,1])
+
+*/
+
+function translate(points, shift){
+    //points is a [npoints, 2] array
+    //shift is a [2] array
+    //lets throw an error if points or shift are not arrays
+    if (!Array.isArray(points) || !Array.isArray(shift)){
+        throw new Error(`Invalid type of points or shift. Expected Array, got ${typeof points} and ${typeof shift}`);
+    }
+    // lets throw an error on dimensions mismatch of points and shift
+    if (points[0].length != 2 || shift.length != 2){
+        throw new Error("Invalid dimensions of points or shift");
+    }
+    let p_T = points.map(p => math.add(p, shift));
+    return p_T;
+}
+
+function rotate(points, angle, center, angle_unit="deg"){
+    //points is a [npoints, 2] array
+    //angle is in radians
+    //center is a [2] array
+    // we'll leverage the translate function to make the center the origin
+    //lets throw error if points or centers are not arrays
+    if (!Array.isArray(points) || !Array.isArray(center)){
+        throw new Error(`Invalid type of points or center. Expected Array, got ${typeof points} and ${typeof center}`);
+    }
+
+    if (angle_unit == "deg"){
+        angle = math.unit(angle, "deg").toNumber("rad");
+    }
+    // lets throw an error on dimensions mismatch of points and center
+    if (points[0].length != 2 || center.length != 2){
+        throw new Error("Invalid dimensions of points or center");
+    }
+    
+    let p_T = translate(points, math.multiply(center, -1));
+    let R_theta = math.matrix([[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]]);
+    let p_R = math.multiply(p_T, R_theta);
+    let p_R_T = translate(p_R.toArray(), center);
+    return p_R_T;
+}
+
+function scale(points, scaleX, scaleY){
+    //points is a [npoints, 2] array, 
+    // We must center the points first scale and then translate back to avoid translation when scaling
+    // lets throw an error if points is not an array
+    if (!Array.isArray(points)){
+        throw new Error(`Invalid type of points. Expected Array, got ${typeof points}`);
+
+    }
+
+    let center = math.mean(points, 0);
+    let p_T = translate(points, math.multiply(center, -1));
+    let S = math.matrix([[scaleX, 0], [0, scaleY]]);
+    let p_S = math.multiply(p_T, S);
+    let p_S_T = translate(p_S.toArray(), center);
+    return p_S_T;
+}
+
+function rotateCOM(points, angle, angle_unit="deg"){
+    //points is a [npoints, 2] array
+    //angle is in radians
+    // lets throw an error on dimensions mismatch of points and center
+    if (points[0].length != 2){
+        throw new Error("Invalid dimensions of points");
+    }
+    let center = math.mean(points, 0);
+    return rotate(points, angle, center, angle_unit);
+}
+
+
+//lets write a couple of functions that will be handy to transform
+// model/world coordinates to canvas (centered) coordinates
+// basically a shift and a scale, with the y-axis flipped
+
+
+function model2Canvas(pointsModel, originModel, canvasX, canvasY, modelX, modelY){
+    //pointsModel is a [npoints, 2] array
+    //originModel is a [2] array, usually [0, 0] but we might want to reference shifted axis in the model space
+    //something useful for instance when we want to transform different bodies COM-centered coordinates to canvas coordinates
+
+    //p_{c} = T_{m->c}(p_{m} - o_{m})+o_{c}  where m is model and c is canvas
+    //p_{m} = T_{c->m}(p_{c} - o_{c})+o_{m} and T_{c->m} = T_{m->c}^{-1}
+    //T_{m->c} = [[sx, 0], [0, -sy]] where sx = canvasX/2 and sy = canvasY/2
+    //T_{c->m} = [[1/sx, 0], [0, -1/sy]]
+    //lets throw an error if pointsModel or originModel are not arrays
+    if (!Array.isArray(pointsModel) || !Array.isArray(originModel)){
+        throw new Error(`Invalid type of pointsModel or originModel. Expected Array, got ${typeof pointsModel} and ${typeof originModel}`);
+    }
+    // lets throw an error if ndims pointsModel and originModel are not the same
+    if (pointsModel[0].length != originModel.length){
+        throw new Error("Invalid dimensions of pointsModel or originModel");
+    }
+
+    let [sx, sy] = [ (canvasX/2)/modelX, (canvasY/2)/modelY];
+    let Tmc = math.matrix([[sx, 0], [0, -sy]]);
+    let oC = [canvasX/2, canvasY/2];
+    let oM = originModel;
+    let pM_T = math.transpose( translate(pointsModel, math.multiply(oM, -1)) );
+    let pT = math.transpose(math.multiply(Tmc, pM_T));
+    let pC = translate(pT.toArray(), oC);
+    return pC;
+}
+
+function canvas2Model(pointsCanvas, originModel, canvasX, canvasY, modelX, modelY){
+    //pointsCanvas is a [npoints, 2] array
+    //originModel is a [2] array, usually [0, 0] but we might want to reference shifted axis in the model space
+
+    //p_{c} = T_{m->c}(p_{m} - o_{m})+o_{c}  where m is model and c is canvas
+    //p_{m} = T_{c->m}(p_{c} - o_{c})+o_{m} and T_{c->m} = T_{m->c}^{-1}
+    //T_{m->c} = [[sx, 0], [0, -sy]] where sx = canvasX/2 and sy = canvasY/2
+    //T_{c->m} = [[1/sx, 0], [0, -1/sy]]
+    //lets throw an error if pointsCanvas or originModel are not arrays
+    if (!Array.isArray(pointsCanvas) || !Array.isArray(originModel)){
+        throw new Error(`Invalid type of pointsCanvas or originModel. Expected Array, got ${typeof pointsCanvas} and ${typeof originModel}`);
+    }
+    // lets throw an error if ndims pointsCanvas and originModel are not the same
+    if (pointsCanvas[0].length != originModel.length){
+        throw new Error("Invalid dimensions of pointsCanvas or originModel");
+    }
+
+    let [sx, sy] = [ (canvasX/2)/modelX, (canvasY/2)/modelY];
+    let Tcm =  math.matrix([[1/sx, 0], [0, -1/sy]]);
+    let oC = [canvasX/2, canvasY/2];
+    let oM = originModel;
+    let pC_T = math.transpose( translate(pointsCanvas, math.multiply(oC, -1)) );
+    let pT = math.transpose(math.multiply(Tcm, pC_T));
+    let pM = translate(pT.toArray(), oM);
+    
+    return pM;
+}
+
+
+function dfdxFun(f, x, h=1e-8){
+    return (f(x+h) - f(x-h))/(2*h);
+}
+
+function d2fdx2Fun(f, x, h=1e-8){
+    return (f(x+h) - 2*f(x) + f(x-h))/(h*h);
+}
+
+
+
+function bisectionSearch(f,a,b, tolf=1e-4, tolx=1e-4, maxIter=50, verbose=true){
+    // we are not finding a root, but a minimum of a function, so we have to do bisection using dfdx as fun not f
+
+    let foriginal = f; // for clarity we'll store the original function
+    let [ao, bo] = [a,b];//we'll store the original values of a and b for later checking
+    let [funoriginalao, funoriginalbo] = [foriginal(a), foriginal(b)]; // we'll store the original values of f(a) and f(b) for later checking
+
+    let fun = (x) => dfdxFun(f,x); // we are finding the root of this function (minimum of f)
+
+    let fa = fun(a);
+    let fb = fun(b);
+
+    // lets add some modifications to ensure we dont find a maximum ( grad = 0 as well)
+    // we'll store the minimum value of foriginal found so far, together with x value for that minimum
+    let [minf, minx] = [Math.min(funoriginalao, funoriginalbo), funoriginalao < funoriginalbo ? a : b];
+
+
+    if (verbose) console.log(`a: ${a}, b: ${b}, fa: ${fa}, fb: ${fb}`);
+
+    if(fa*fb >= 0){
+        if (verbose) console.log("Root not bracketed returning min(f(a),f(b))");
+        return minx;
+
+    }
+
+    let c = (a+b)/2;
+    let fc = fun(c);
+
+    let iter = 0;
+
+    while(Math.abs(fc) > tolf && Math.abs(b-a) > tolx && iter < maxIter){
+        if (verbose) console.log(`ITER ${iter},   a: ${a}, b: ${b}, c: ${c}, fa: ${fa}, fb: ${fb}, fc: ${fc}`);
+        if (fa*fc < 0){
+            b = c;
+            fb = fc;
+        }else{
+            a = c;
+            fa = fc;
+        }
+
+        c = (a+b)/2;
+        fc = fun(c);
+        iter++;
+
+        // lets check if we have found a new minimum and store it
+        if (foriginal(c) < minf){
+            minf = foriginal(c);
+            minx = c;
+        }
+    }
+
+    if (iter == maxIter){
+        if (verbose) console.log("CONVERGENCE FAILED Max iterations reached");
+        //lets throw an error
+        throw new Error("CONVERGENCE FAILED Max iterations reached");
+    }
+    else{
+        //lets write a string to the console to show the results
+        // we display (xao,foriginal(xao)) and (xbo,foriginal(xbo))  and (minx,foriginal(minx)) together with funder(c) and the number of iterations
+        if (verbose) console.log(`a: ${ao}, b: ${bo}, fa: ${funoriginalao},
+                                             fb: ${funoriginalbo}, minx: ${minx},
+                                              minf: ${minf}, derf(c): ${fc},c: ${c}, iterations: ${iter}`);
+        // lets check if the grad root we found correspond to a minimum or a maximum
+        // if the second derivative is positive at the root, then we have a minimum else we have a maximum
+        if (d2fdx2Fun(f,minx) > 0){
+            if (verbose) console.log("Minimum found");
+        }else{
+            if (verbose) console.log("MAXIMUM FOUND, return minimum value found so far");
+        }
+        
+        return minx;
+    }
+
+
+}
+
+
+function goldenSectionSearch(f,a,b,tolxrel= 1e-2, maxIter=20, verbose=false){
+    
+    let phi = (1+Math.sqrt(5))/2;
+    let invphi = 1/phi;
+
+
+    // while (b-a) > tolx
+    let c = b - (b-a)*invphi;
+    let d = a + (b-a)*invphi;
+    let [fa,fc,fd,fb] = [f(a),f(c),f(d),f(b)];
+    // lets store the f,x for the minimum of the 4
+    let width = b-a;
+    let minf = Math.min(fa,fc,fd,fb);
+    let minx = minf == fa ? a : minf == fc ? c : minf == fd ? d : b;
+
+    let iter = 0;
+    while(Math.abs(b-a)/width > tolxrel && iter < maxIter){
+        if (verbose) console.log(`ITER ${iter},   a: ${a}, b: ${b}, c: ${c}, d: ${d}, fc: ${fc}, fd: ${fd}`);
+        console.log("Math.abs(b-a)/width",Math.abs(b-a)/width, "tolxrel",tolxrel);
+        if (fc < fd){
+            b = d;
+            fb=fd;
+
+        }
+        else{
+            a = c;
+            fa = fc;
+            
+        }
+
+        c = b - (b-a)*invphi;
+        d = a + (b-a)*invphi;
+        fc = f(c);
+        fd = f(d);
+
+        let minfn = Math.min(fa,fc,fd,fb);
+        let minxn = minf == fa ? a : minf == fc ? c : minf == fd ? d : b;
+
+        if (minfn < minf){
+            minf = minfn;
+            minx = minxn;
+        }
+
+        iter++;
+    }
+
+    if (iter == maxIter){
+    
+        //throw new Error("CONVERGENCE FAILED Max iterations reached");
+        console.log("CONVERGENCE FAILED Max iterations reached");
+        return minx;
+    }
+
+    else{
+        if (verbose) console.log(`a: ${a}, b: ${b}, c: ${c}, d: ${d}, fa: ${fa}, fc: ${fc}, fd: ${fd}, fb: ${fb}, minx: ${minx}, minf: ${minf}`);
+        return minx;
+    }
+
+}
+
+
+
+function getNeighborsDelauney(points){
+    /*
+    Needs the library Delaunator to be loaded on the page
+   https://unpkg.com/delaunator@5.0.0/delaunator.min.js
+    Example usage
+    let neighbors = getNeighbors(points);
+    example output
+    {
+        0: [1, 2, 3],
+        1: [0, 2, 3],
+        2: [0, 1, 3],
+        3: [0, 1, 2]
+    }
+    */
+
+    const delaunay = Delaunator.from(points);
+    const triangles = delaunay.triangles;
+
+    let neighbors = {};
+    for (let i = 0; i < triangles.length; i += 3) {
+        const p1 = triangles[i];
+        const p2 = triangles[i + 1];
+        const p3 = triangles[i + 2];
+        if (neighbors[p1] === undefined){
+            neighbors[p1] = [];
+        }
+        if (neighbors[p2] === undefined){
+            neighbors[p2] = [];
+        }
+        if (neighbors[p3] === undefined){
+            neighbors[p3] = [];
+        }
+        neighbors[p1].push(p2);
+        neighbors[p1].push(p3);
+        neighbors[p2].push(p1);
+        neighbors[p2].push(p3);
+        neighbors[p3].push(p1);
+        neighbors[p3].push(p2);
+    }
+
+    //lets remove duplicates
+    for (let key in neighbors){
+        neighbors[key] = [...new Set(neighbors[key])];
+    }
+
+    //lets transform keys and values to numbers
+    let neighborsNum = {};
+    for (let key in neighbors){
+        neighborsNum[parseInt(key)] = neighbors[key].map(x => parseInt(x));
+    }
+
+    return neighborsNum
+}
+
+
+export {translate, rotate, rotateCOM,scale,  model2Canvas, canvas2Model,
+     bisectionSearch,goldenSectionSearch, dfdxFun, d2fdx2Fun, getNeighborsDelauney};

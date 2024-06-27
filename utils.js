@@ -148,5 +148,46 @@ function capDecimalsArray(array, decimals = 3) {
     }
   }
   
+
+function getSvgRelativeCoords(svg, xabs, yabs){
+  let rect = svg.getBoundingClientRect();
+  let [xoffset, yoffset] = [rect.x, rect.y];
+  let [xsvg, ysvg] = [xabs - xoffset, yabs - yoffset];
+  return [xsvg, ysvg];
+}
+
+
+function displayMouseCoords(svg,  canvas2ModelCallback = null,div_output_id = null) {
+  svg.addEventListener("mousemove", function(event) {
+    let [xabs, yabs] = [event.clientX, event.clientY];
+    let [xsvg, ysvg] = getSvgRelativeCoords(svg, xabs, yabs);
+    if (div_output_id) {
+      let div = document.getElementById(div_output_id);
+      div.textContent = `Mouse coordinates: (${xsvg.toFixed(2)}, ${ysvg.toFixed(2)})`;
+    } else {
+      // Check if the text element already exists
+      let textElement = svg.querySelector("#mouse-coords");
+      if (!textElement) {
+        // If it doesn't exist, create it
+        textElement = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        textElement.setAttribute("id", "mouse-coords");
+        textElement.setAttribute("x", 10); // Adjust position as needed
+        textElement.setAttribute("y", 20); // Adjust position as needed
+        svg.appendChild(textElement);
+      }
+      // Update the text content
+      if (canvas2ModelCallback) {
+        let [xmodel, ymodel] = canvas2ModelCallback([ [xsvg, ysvg] ])[0];
+        let strText = `Mouse coordinates: (${xsvg.toFixed(2)}, ${ysvg.toFixed(2)}) (${xmodel.toFixed(2)}, ${ymodel.toFixed(2)})`;
+        textElement.textContent = strText;
+      }
+      else {
+        textElement.textContent = `Mouse coordinates: (${xsvg.toFixed(2)}, ${ysvg.toFixed(2)})`;
+      }
+    }
+  });
+}
+
+
 export { sliceMatrix, prettyPrintState, displayStateText, capDecimalsArray,
-       getArrayDimensions, displayObjectInDiv};
+       getArrayDimensions, displayObjectInDiv, getSvgRelativeCoords, displayMouseCoords};
