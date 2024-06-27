@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Inverse Kinematics Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.4/math.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <!-- Include jQuery UI -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+    <script src="https://unpkg.com/delaunator@5.0.0/delaunator.min.js"></script>
+
+</head>
+<body>
+    <button id="step">Step</button>
+    <svg id="canvas" width="800" height="600" style="border: 1px solid black;"></svg>
+    <div id="plot"></div>
+    <div id = "info"></div>
+    
+
+    <script type= "module">
+        import {getNeighborsDelauney} from './math_utils.js';
+        /*
+        sources
+        https://www.cs.cmu.edu/~15464-s13/lectures/lecture6/iksurvey.pdf
+        
+        We'll deal with particle points with distance and pin constraints
+        We wont be directly working with angles, but with the x and y coordinates of the points
+        constraints are
+
+        Cdistance = ||p_{a}-p_{b}||^2 - dba^2 = 0
+        Cpin = ||p_{pinpoint} - p_{a}||^2 - dapin^2 = 0
+
+        The goal is to make the effector particles reach their respective target points while satisfying the constraints
+
+        We'll implement algorithms from simple to complex
+        The algorithms will be
+        1. Fabrik,CCD,Gauss-seidel
+        3. Jacobian Transpose
+        4. Jacobian Pseudo Inverse
+        5. Damped Least Squares
+
+        Fabrik is the simplest and most intuitive, but it has limitations for complex structures
+        CCD is usually employed with angles, but we'll use it with points
+
+        So we'll implement coordinate descent with the mae of the constraints as the error function
+        We'll use bisection search to find the optimal step size
+        This can be seen as a gauss-seidel for non-linear equations
+        */
+
+        import {Drawer, drawParticles} from './drawing.js';
+
+        //example usage 
+        //      drawDistanceConstraints(svgd3, xs, constraints_idxs1, distances1, "distance_constraints", "black");
+        //       drawPinConstraints(svgd3, xs, constraints_idxs2, pinpoints, distances2, "pin_constraints", "black");
+        //     drawParticles(svgd3, xs, "particles", "green");
+        // xs is a [nparticles,2] array of particle positions
+
+
+        import {ConstraintDistance, ConstraintPin} from './constraints.js';
+        //constructor of ConstraintDistance is (particle1_idx, particle2_idx, distance) of ConstraintPin is (particle_idx, pin_point, distance)
+        // both have getJacobianParticles(parray) getConstraintValue(parray) methods 
+        // where parray is a [nparticles,2] array of particle positions
+
+        import {bisectionSearch,goldenSectionSearch} from './math_utils.js';
+        //bisectionSearch(f,a,b, tolf=1e-4, tolx=1e-4, maxIter=50, verbose=true)
+        //goldenSectionSearch(f,a,b,tolxrel= 1e-2, maxIter=20, verbose=false)
+
+        import {chainSystemConfig} from "./solver.js";
+
+        import {makeParticleDraggable, makeCircleDraggable} from "./dashboardUI.js";
+
+        import {displayObjectInDiv, displayMouseCoords} from "./utils.js";
+
+
+        const svg = document.getElementById('canvas');
+        
+
+
+        //we'll need line search to find the optimal step size so lets start by writing a simple routine to perform bisection search
+
+        // we'll use numerical differentiation to find the gradient of the function to do bisection  
+
+  
+
+
+
+
+
+
+        // we'll work with a STATE object that will contain the particles arrays and the constraints
+        //we'll work on the [0,1]x[0,1] with origin at the top bottom left corner, when drawing in the svg we'll have to flip the y axis
+        // and scale the x and y coordinates to the svg dimensions
+        // the order of constraints [constraints_distance, constraints_pin]
+        // the STATE object will be :
+        /*
+        let STATE = {
+            xs: [[x1,y1],[x2,y2],...,[xn,yn]],
+            constraints_distance: [ [particle1_idx, particle2_idx, distance], ...],
+            constraints_pin: [ [particle_idx, [pin_x, pin_y], distance], ...],
+            "constraints_values": [Cdistance1, Cdistance2, ... , Cpin1, Cpin2, ...],// should be 0 if constraints are satisfied
+            "constraints_mae": mae_residuals_constraints_values,
+            "targets": [[particle_idx, [target_x, target_y]], ...],
+            "target_mae": mae_residuals_targets,
+
+            }
+        */
+
+        // lets write a function to get the array of constraint objects from the state constraints_distance and constraints_pin
+
+        function getConstraintsObjs(constraints_distance, constraints_pin){
+
+            let constraints = [];
+
+            let constraintsDistanceObjs = constraints_distance.map(c => new ConstraintDistance(c[0], c[1], c[2]));
+            let constraintsPinObjs = constraints_pin.map(c => new ConstraintPin(c[0], c[1], c[2]));
+
+            constraints = constraints.concat(constraintsDistanceObjs);
+            constraints = constraints.concat(constraintsPinObjs);
+
+            return constraints;
+        }
+
+        
+
+            
+
+        
+
+
+
+        // lets write the coordinate descent/gauss seidel algorithm
+        
+        function coordDescentStep(STATE, step_size_max,verbose=false){
+
+            // We iterate over each coord of each particle, this 
+            // is equivalent to a search direction of the form [[1,0],[0,0],[0,0]] for instance for xcoord of first particle
+            // For the [a,b] values of the bisection search we'll use [-step_size_max, step_size_max]
+            // we must package the function to be minimized as a function of one variable, the step size
+
+            let constraintObjs = getConstraintsObjs(STATE.constraints_distance, STATE.constraints_pin);
+
+            for (let i = 0; i < STATE.xs.length; i++){
+                for (let j = 0; j < 2; j++){
+                    let x = STATE.xs[i][j];
+                    let f = (step) => {
+                        let xs = math.clone(STATE.xs);
+                        xs[i][j] = x + step;
+                        let constraints_values = constraintObjs.map((constraint) => constraint.getConstraintValue(xs));
+                        // we have to include the target mae in the error function
+                        for (let k = 0; k < STATE.targets.length; k++){
+                            let [particle_idx, [target_x, target_y]] = STATE.targets[k];
+                            let [etx,ety] = [target_x-xs[particle_idx][0], target_y-xs[particle_idx][1]];
+                            constraints_values.push(etx);
+                            constraints_values.push(ety);
+                        }
+
+                        let mae = math.mean(math.abs(constraints_values));
+                        return mae
+                    };
+
+                    //let step = bisectionSearch(f,-step_size_max,step_size_max,1e-6,1e-6,50,false);
+                    let step = goldenSectionSearch(f,-step_size_max,step_size_max,1e-3,10,false);
+                    if (verbose) console.log(`Particle ${i}, coord ${j}, step: ${step}`);
+                    STATE.xs[i][j] = x + step;
+                }
+            }
+
+            updateStateMae(STATE);
+
+        }
+
+
+    function coordDescent(STATE, step_size_max, tol, maxIter, verbose=false){
+        let iter = 0;
+        while(STATE.total_mae > tol && iter < maxIter){
+            coordDescentStep(STATE, step_size_max, verbose);
+            iter++;
+            if (verbose) console.log(`ITER ${iter}, Total MAE: ${STATE.total_mae}`);
+        }
+    }
+
+
+    // Lets implement another algorithm, a simple implementation of fabrik
+    // we start by moving the effectors to the targets  and backpropagate the positions to the roots
+    // The only assumption is that there are no cycles in the kinematic tree
+    // we'll do a depth first search to backpropagate the positions
+    // we'll implement the algorithm as a class, the constructor will build from the STATE object the neighbors dict
+    // as a dict of particle_idx: [neighbors_idxs,pin_point,target] if the particle is not a base particle pin_point will be null 
+    // if the particle is not an effector target will be null
+    
+    console.log("FABRIK NOT WORKING PROPERLY YET")
+    class Fabrik{
+        constructor(STATE){
+            //constructor dict works properly
+            // once executed this.neighbors will be something like:
+            // {0: [[1],null,[0.2,0.2]], 1: [[0],null,null]} for instance for
+            // a dumbbell system with one particle being the effector
+            this.STATE = STATE;
+            this.neighbors = {};
+            for (let i = 0; i < STATE.xs.length; i++){
+                this.neighbors[i] = [[],null,null];
+            }
+            for (let i = 0; i < STATE.constraints_distance.length; i++){
+                let [particle1_idx, particle2_idx, distance] = STATE.constraints_distance[i];
+                this.neighbors[particle1_idx][0].push(particle2_idx);
+                this.neighbors[particle2_idx][0].push(particle1_idx);
+            }
+            for (let i = 0; i < STATE.constraints_pin.length; i++){
+                let [particle_idx, [pin_x, pin_y], distance] = STATE.constraints_pin[i];
+                this.neighbors[particle_idx][1] = [pin_x, pin_y];
+            }
+            for (let i = 0; i < STATE.targets.length; i++){
+                let [particle_idx, [target_x, target_y]] = STATE.targets[i];
+                this.neighbors[particle_idx][2] = [target_x, target_y];
+            }
+        }
+
+        main(){
+            this.forward();
+            this.backward();}
+ 
+    }
+    
+
+
+    function updateStateMae(STATE){
+        // here we just update the constraints_values and constraints_mae and target_mae
+        let constraintObjs = getConstraintsObjs(STATE.constraints_distance, STATE.constraints_pin);
+        let constraints_values = constraintObjs.map((constraint) => constraint.getConstraintValue(STATE.xs));
+        let constraints_mae = math.mean(math.abs(constraints_values));
+        let targets_errors = [];
+        for (let k = 0; k < STATE.targets.length; k++){
+            let [particle_idx, [target_x, target_y]] = STATE.targets[k];
+            targets_errors.push(math.abs(STATE.xs[particle_idx][0] - target_x) + math.abs(STATE.xs[particle_idx][1] - target_y));
+        }
+        let target_mae = math.mean(targets_errors);
+        let total_mae = constraints_mae + target_mae;
+        STATE.constraints_values = constraints_values;
+        STATE.constraints_mae = constraints_mae;
+        STATE.target_mae = target_mae;
+        STATE.total_mae = total_mae;
+
+    }
+
+
+    // lets implement a function that performs coordinate descent until the error is below a certain threshold
+
+
+    function drawTargets(svg,targets,drawer){
+        // a circle for each target, color green, and radius 5 and target text is the particle index targetted
+
+        let posTargets = targets.map(t => t[1]);
+        posTargets = drawer.model2Canvas(posTargets,true);
+        let particleIdxs = targets.map(t => t[0]);
+        let groupParticlesId = "targets";
+        drawParticles(d3.select(svg), posTargets, 10, groupParticlesId, "green");
+        d3.select(svg).selectAll(`#${groupParticlesId}`).selectAll("text").data(particleIdxs).enter().append("text")
+            .attr("x", d => posTargets[d][0])
+            .attr("y", d => posTargets[d][1])
+            .text(d => d)
+            .attr("fill", "black")
+            .attr("font-size", "10px")
+            .attr("text-anchor", "middle")
+            .attr("alignment-baseline", "middle");
+    }
+       
+
+    function updateState(property,val,STATE){
+        STATE[property] = val;
+        updateStateMae(STATE);
+    }
+
+
+    function rigidRectangleState(width, height,origin=[0,0]){
+        //we'll create the rectangle 4 points, and we'll use use getNeighborsDelauney to 
+        // set the distance constraints
+        let xs = [[origin[0],origin[1]],
+                  [origin[0]+width,origin[1]],
+                  [origin[0]+width,origin[1]+height],
+                  [origin[0],origin[1]+height]];
+
+        let neighs = getNeighborsDelauney(xs);
+        //neighs is a dict of particle_idx: [neighbors_idxs]
+        // we have to iterate over the keys of neighs get the distances and create the constraints
+        // to avoid duplicates we store the (idxa,idxb) visited pairs, ordered idxa < idxb
+        // so for every new pair we sort it and check if it is in the set of visited pairs
+        // if it is not we add it to the set and create the constraint
+        // we sort the pairs and turn into a string to add to the set example [1,2] => "1,2" [2,1] => "1,2"
+        let visitedPairs = new Set();
+        let constraints_distance = [];
+        for (let particle_idx in neighs){
+            let neighbors = neighs[particle_idx];
+            for (let i = 0; i < neighbors.length; i++){
+                let particle_idx2 = neighbors[i];
+                let pair = [particle_idx, particle_idx2];
+                pair.sort();
+                let pairStr = pair.join(",");
+                if (!visitedPairs.has(pairStr)){
+                    visitedPairs.add(pairStr);
+                    //particle_idx and particle_idx2 to Integer
+                    particle_idx = parseInt(particle_idx);
+                    particle_idx2 = parseInt(particle_idx2);
+                    let distance = math.distance(xs[particle_idx], xs[particle_idx2]);
+                    constraints_distance.push([particle_idx, particle_idx2, distance]);
+                }
+            }
+        }
+
+      
+        let STATE = {
+            neighbors: neighs,
+            xs: xs,
+            constraints_distance: constraints_distance,
+            constraints_pin: [],
+            "constraints_values": [],
+            "constraints_mae": 0,
+            "targets": [],
+            "target_mae": 0,
+            "total_mae": 0,
+            "masses": [1,1,1,1],
+
+
+        };
+
+        return STATE;
+      
+    }
+        
+
+
+        //let nparticles = 4;
+        //let distance = 0.3;// distance between particles in the 0,1 x 0,1 square
+        //let STATE = chainSystemConfig(nparticles, 0, distance, 1, 0)//nparticles,g,distance,mass,angle
+
+        let STATE = rigidRectangleState(0.5,0.5);
+        console.log(STATE);
+        window.STATE = STATE;
+        // We have to add the following properties to the STATE object
+        //constraints_values, constraints_mae, targets, target_mae, total_mae
+        let nparticles = STATE.xs.length;
+        STATE.targets = [[0, [0.8,0.2]]];
+        updateStateMae(STATE);
+
+
+        let step_button = document.getElementById('step');
+        //lets add an event listener to the step button
+
+        let drawer = new Drawer(svg);
+        //drawer.drawState(STATE);
+        drawer.drawState(STATE);
+        drawTargets(svg,STATE.targets,drawer);
+
+
+        
+        function canvas2ModelCallback(points){
+            return drawer.canvas2Model(points,true);
+        }
+
+        displayMouseCoords(svg, canvas2ModelCallback);
+        //lets iter over targets, the ids of all target particles will be target_particle_idx
+
+        function displayStateCallback(){
+            displayObjectInDiv(STATE, "info");
+        }
+
+        let counts = 0;
+
+
+       let algorithm = (STATE)=>{coordDescent(STATE, 0.1, 1e-1, 10, true);};
+        let algorithmStep = (STATE)=>{coordDescentStep(STATE, 0.5, true);};
+       // let algorithm = (STATE)=>{let fabrik = new Fabrik(STATE); fabrik.main();};
+        //let algorithmStep = (STATE)=>{let fabrik = new Fabrik(STATE); fabrik.main();};
+        function mainCallbackStep(){
+            
+            algorithmStep(STATE);
+            drawer.drawState(STATE);
+            displayStateCallback();
+            
+        }
+
+        function mainCallback(){
+            algorithm(STATE);            
+            drawer.drawState(STATE);
+            drawTargets(svg,STATE.targets,drawer);
+            displayStateCallback();
+            
+        }
+
+        // lets make the targets draggabsle
+       // makeCircleDraggable(SVG, particle_id,updateCallback, canvas2Model,callbacks = [])
+       for (let i = 0; i < STATE.targets.length; i++){
+           let targetIdx = i;
+           let targetId = `targets_particle_${targetIdx}`;
+           let updateCallback = (pos) => {
+
+               let targets = STATE.targets;
+               targets[targetIdx][1] = pos;
+               updateState("targets",targets,STATE);
+               mainCallback();
+           }
+
+        makeCircleDraggable(svg, targetId, updateCallback, canvas2ModelCallback);
+       }
+
+
+
+        
+
+        step_button.addEventListener('click', mainCallbackStep);
+ 
+
+ 
+
+    </script>
+</body>
+</html>
