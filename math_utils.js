@@ -1,44 +1,25 @@
-/*
-Math utils js module
 
-This module needs mathjs to be loaded in the html file
 
-Collection of math utility functions, coordinate transformations etc
-Lets write a minimalistic description of the functions in this module, signature and usage
+function getArrayShape(array) {
+    let shape = [];
+    while (Array.isArray(array)) {
+      shape.push(array.length);
+      array = array[0];
+    }
+    return shape;
+  }
 
-translate(points, shift)
-    points is a [npoints, 2] array
-    shift is a [2] array
-    returns a [npoints, 2] array of points translated by shift
+  function getArrayDimensions(array) {
+    let shape = getArrayShape(array);
+    return shape.length;
+    }
 
-rotate(points, angle, center, angle_unit="deg")
-    points is a [npoints, 2] array
-    angle is in radians
-    center is a [2] array
-    angle_unit is "deg" or "rad"
-    returns a [npoints, 2] array of points rotated by angle around center
+function isShapeEqual(array1, array2) {
+    let shape1 = getArrayShape(array1);
+    let shape2 = getArrayShape(array2);
+    return JSON.stringify(shape1) === JSON.stringify(shape2);
+    }
 
-rotateCOM(points, angle, angle_unit="deg")
-
-    points is a [npoints, 2] array
-    angle is in radians
-    returns a [npoints, 2] array of points rotated by angle around the center of mass of points
-
-model2Canvas(pointsModel, originModel, canvasX, canvasY, modelX, modelY)
-    pointsModel is a [npoints, 2] array
-    originModel is a [2] array, usually [0, 0] but we might want to reference shifted axis in the model space
-    returns a [npoints, 2] array of points transformed from model to canvas coordinates
-    canvasX, canvasY are the dimensions of the canvas (usually the canvas.width and canvas.height)
-    modelX, modelY are the dimensions of the model space (usually [-1,1]x[-1,1])
-
-canvas2Model(pointsCanvas, originModel, canvasX, canvasY, modelX, modelY)
-    pointsCanvas is a [npoints, 2] array
-    originModel is a [2] array, usually [0, 0] but we might want to reference shifted axis in the model space
-    returns a [npoints, 2] array of points transformed from canvas to model coordinates
-    canvasX, canvasY are the dimensions of the canvas (usually the canvas.width and canvas.height)
-    modelX, modelY are the dimensions of the model space (usually [-1,1]x[-1,1])
-
-*/
 
 function translate(points, shift){
     //points is a [npoints, 2] array
@@ -109,9 +90,58 @@ function rotateCOM(points, angle, angle_unit="deg"){
 }
 
 
+
+function calculateCOM(points, masses){
+    //points is a [npoints, 2] array
+    //masses is a [npoints] array
+    // lets throw an error on dimensions mismatch of points and masses
+    if (points.length != masses.length){
+        throw new Error("Invalid dimensions of points or masses");
+    }
+    let COM = math.multiply(math.transpose(points), masses);
+    COM = math.divide(COM, math.sum(masses));
+    return COM;
+}
+
+function calculateCOMInertiaMoment(points, masses){
+    //points is a [npoints, 2] array
+    //masses is a [npoints] array
+    // lets throw an error on dimensions mismatch of points and masses
+    // it is 2d so things can only rotate around the z-axis so we only need the moment of inertia around the z-axis
+    // I = sum_i m_i (x_i^2 + y_i^2) = sum_i m_i r_i^2  with r_i = point_i - COM
+    if (points.length != masses.length){
+        throw new Error("Invalid dimensions of points or masses");
+    }
+    let COM = calculateCOM(points, masses);
+    let pointsCOM = translate(points, math.multiply(COM, -1));
+    let r2 = math.sum(pointsCOM.map((p,i) => math.dot(p,p)*masses[i]));
+    return r2;
+}
+
+function calculateInertiaMoment(points,masses, center){
+    if (points.length != masses.length){
+        throw new Error("Invalid dimensions of points or masses");
+    }
+    let pointsCenter = translate(points, math.multiply(center, -1));
+    let r2 = math.sum(pointsCenter.map((p,i) => math.dot(p,p)*masses[i]));
+    return r2;
+}
+
+
+
+
+
+
+
+
+
+
+
 //lets write a couple of functions that will be handy to transform
 // model/world coordinates to canvas (centered) coordinates
 // basically a shift and a scale, with the y-axis flipped
+
+
 
 
 function model2Canvas(pointsModel, originModel, canvasX, canvasY, modelX, modelY){
@@ -170,6 +200,33 @@ function canvas2Model(pointsCanvas, originModel, canvasX, canvasY, modelX, model
     return pM;
 }
 
+
+function dArraydtFun(array, h){
+    //calculates numericalderivative for an array of values, assuming they come as discrete evaluation of a t->R function sampled at fixed intervals h
+    //we'll use a centered difference scheme, for the first and last points we'll use a forward and backward difference scheme
+    let dims = getArrayDimensions(array);
+    //if dims !=2 ([npoints,ndim]) we throw an error
+    if (dims.length != 2){
+        let givenDims = dims;
+        throw new Error(`Invalid dimensions of array. Expected 2, got ${givenDims}`);
+    }
+
+    let dArraydt = [];
+    let n = array.length;
+    for (let i = 0; i < n; i++){
+        if (i == 0){
+            dArraydt.push((array[1] - array[0])/h);
+        }
+        else if (i == n-1){
+            dArraydt.push((array[n-1] - array[n-2])/h);
+        }
+        else{
+            dArraydt.push((array[i+1] - array[i-1])/(2*h));
+        }
+    }
+
+    return dArraydt;
+}
 
 function dfdxFun(f, x, h=1e-8){
     return (f(x+h) - f(x-h))/(2*h);
@@ -375,5 +432,131 @@ function getNeighborsDelauney(points){
 }
 
 
+
+function lerp(tEval,tArray,xArray){
+    //if tEval is outside the range
+    // of tArray we throw an error
+    let ndim = xArray[0].length;
+    let xEval = [];
+    //lets print for debuggint teval 0 and final and tarray 0 and final values
+    console.log("tEval[0]",tEval[0],"tEval[tEval.length-1]",tEval[tEval.length-1],"tArray[0]",tArray[0],"tArray[tArray.length-1]",tArray[tArray.length-1]);
+    for (let i = 0; i < tEval.length; i++){
+        let t = tEval[i];
+       // if (t < tArray[0] || t > tArray[tArray.length-1]){
+         //   throw new Error("tEval out of range");
+       // }
+        let idx = null;
+        for (let j = 0; j < tArray.length; j++){
+            if (tArray[j] > t){
+                idx = j;
+                break;
+            }
+        }
+        //sloppy temporal fix
+        if (idx == null){
+            idx = tArray.length-2;
+        }
+
+        let t1 = tArray[idx-1];
+        let t2 = tArray[idx];
+        let x1 = xArray[idx-1];
+        let x2 = xArray[idx];
+        //debuging log
+        let x = x1.map((x1i, i) => x1i + (t-t1)*(x2[i]-x1i)/(t2-t1));
+        
+        xEval.push(x);
+    }
+
+    return xEval;
+    
+}
+
+function EulerStep(fun, x, h,t){
+    //fun is the dxdt function fun(x,t)
+    //x is a R array
+    //h is the step size 
+
+    let dxdt = fun(x,t);
+    let xnew = math.add(x, math.multiply(dxdt, h));
+    return xnew;
+}
+
+function RK4Step(fun, x, h,t){
+    //x is a R array
+    //h is the step size 
+
+    let k1 = fun(x,t);
+    let k2 = fun(math.add(x, math.multiply(k1, h/2)),t+h/2);
+    let k3 = fun(math.add(x, math.multiply(k2, h/2)),t+h/2);
+    let k4 = fun(math.add(x, math.multiply(k3, h)),t+h);
+    let xnew = math.add(x, math.multiply(math.add(k1, math.multiply(k2, 2), math.multiply(k3, 2), k4), h/6));
+    return xnew;
+}
+
+function RK2Step(fun, x, h, t){
+    //x is a R array
+    //h is the step size
+
+    let k1 = fun(x,t);
+    let k2 = fun(math.add(x, math.multiply(k1, h)),t+h);
+    let xnew = math.add(x, math.multiply(math.add(k1, k2), h/2));
+    return xnew;
+}
+
+function integrateOde(fun, x0, tf, h, method="RK4", tArrayEval = null){
+    //fun is the dxdt function, a R x R function where R is the dimension of x
+    //x0 is a R array
+    //t0 is the initial time
+    //tf is the final time
+    //h is the step size
+    //if tArrayEval is given we use lerping to interpolate the solution at those times
+    //method is the integration method, Euler or RK4
+    let t0 = 0;
+    let x = x0;
+    let t = t0;
+    let nsteps = Math.floor((tf-t0)/h);
+    let xtraj = [x0];
+    let ttraj = [t0];
+    for (let i = 0; i < nsteps; i++){
+        if (method == "Euler"){
+            x = EulerStep(fun, x, h, t);
+        }
+        else if (method == "RK4"){
+            x = RK4Step(fun, x, h, t);
+        }
+        else if (method == "RK2"){
+            x = RK2Step(fun, x, h, t);
+        }
+        else{
+            throw new Error("Invalid method, use Euler or RK4");
+        }
+        t = t + h;
+        xtraj.push(x);
+        ttraj.push(t);
+    }
+    if (tArrayEval == null){
+        return [xtraj, ttraj];
+    }
+    else{
+        let xEval = lerp(tArrayEval, ttraj, xtraj);
+        return xEval;
+    }
+}
+
+function integrateOdeOnTarray(fun, x0, tArray, method = "RK4"){
+    //a simple util wrapper on integrate ODE
+    //assumes h is the same for all steps
+    let tf = tArray[tArray.length-1];
+    let h = tArray[1] - tArray[0];
+    let xEval = integrateOde(fun, x0, tf, h, method, tArray);
+    return xEval;
+}
+
+
+
+
+
 export {translate, rotate, rotateCOM,scale,  model2Canvas, canvas2Model,
-     bisectionSearch,goldenSectionSearch, dfdxFun, d2fdx2Fun, getNeighborsDelauney};
+     bisectionSearch,goldenSectionSearch, dfdxFun, d2fdx2Fun, dArraydtFun,
+      getNeighborsDelauney, calculateCOM, getArrayDimensions, getArrayShape, isShapeEqual, lerp,
+      calculateCOMInertiaMoment, calculateInertiaMoment, integrateOde, integrateOdeOnTarray,EulerStep, RK4Step};

@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html>
+  <style>
+      #debug-info {
+      position: absolute;
+
+      border: 1px solid black;
+      padding: 10px;
+      background-color: white;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      border: 1px solid black;
+      padding: 10px;
+      background-color: white;
+    }
+
+    #svgMain {
+      border: 1px solid black;
+    }
+  </style>
+  <head>
+    <title>Constraint Solver Test RealTime</title>
+  </head>
+  <body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.2/math.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/delaunator@5.0.0/delaunator.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+    <div id = "controls">
+        <button id = "Play">Play</button>
+        <button id = "Pause">Pause</button>
+        <button id = "Step">Step</button>
+        <button id = "plotStory">Plot Story</button>
+        <button id = "sliderStory">Slider Story</button>
+    </div>
+
+    <svg id="svgMain" width="800" height="800">
+     </svg>
+     <div id = "fps"></div>
+
+        <div id = "plots" style="display: flex; flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center;">
+        </div>
+
+
+        <div id="debug-info"></div>   
+
+
+    <script type="module">
+
+        import {computeJacobians,
+              stepUnpackStateWithContact, Polygon,
+               CollisionHandler, solveConstraints, computeExternalForces,
+               calculateConstraintForces , stepSemiEulerContact} from "./solver.js";
+        import {drawCircles, drawLines, drawArrow,
+             drawPolygon, drawParticles,PolygonDrawer, CollisionDrawer,Drawer} from "./drawing.js";
+        import {model2Canvas, canvas2Model,translate, scale,rotateCOM,getNeighborsDelauney} from "./math_utils.js";
+        import {makeParticleDraggable, particleInteractionMouse} from "./dashboardUI.js";
+        import {displayMouseCoords,displayObjectInDiv,capDecimalsArray} from "./utils.js";
+        //computeJacobians(constraints,xarray,varray)-> return [J, dot_J]; [sconstraints, 2*nparticles] matrices
+        // position array is flattened [x1,y1,x2,y2,...]
+        //STATE object has everything needed to run the simulation plus additional information for debugging
+        //mandatory fields of STATE are    ["constraints_distance", "constraints_pin","collisions","polygons", "xs", "vs", "masses"]
+        // collisions is an array of type [[iP,jE,Polidx],...] where iP is the particle index, jE is the edge index, Polidx is the polygon index
+        //the constraint objects array will have the order [distance, pin, contact]
+        //drawCircles(svg,xs, radii = 5, color = "red", groupCirclesId = "circlesGroup", display_indices = true) -> draws circles in svg
+        //drawLines(svg, xsOrigs, xsDests, color = "black", groupLinesId = "linesGroup") -> draws lines in svg
+        //drawPolygon(SVG,polygonId, points, color = "black") -> draws a polygon in svg
+        //drawArrow(svg,porigin,pend, id = "arrow", class_name = "arrow",color = "black", width = 2) -> draws an arrow in svg
+                /*
+    model2Canvas(pointsModel, originModel, canvasX, canvasY, modelX, modelY)
+    pointsModel is a [npoints, 2] array
+    originModel is a [2] array, usually [0, 0] but we might want to reference shifted axis in the model space
+    returns a [npoints, 2] array of points transformed from model to canvas coordinates
+    canvasX, canvasY are the dimensions of the canvas (usually the canvas.width and canvas.height)
+    modelX, modelY are the dimensions of the model space (usually [-1,1]x[-1,1])
+
+        canvas2Model(pointsCanvas, originModel, canvasX, canvasY, modelX, modelY)
+            pointsCanvas is a [npoints, 2] array
+            originModel is a [2] array, usually [0, 0] but we might want to reference shifted axis in the model space
+            returns a [npoints, 2] array of points transformed from canvas to model coordinates
+            canvasX, canvasY are the dimensions of the canvas (usually the canvas.width and canvas.height)
+            modelX, modelY are the dimensions of the model space (usually [-1,1]x[-1,1])
+        
+        */
+
+            /* Basic usage of the Polygon class
+    * let vertices = [[0,0],[1,0],[1,1],[0,1]];
+    * let polygon = new Polygon(vertices, 0);
+    * let point = [0.5,0.5];
+    * let [closest_edge,distance] = polygon.getClosestEdge(point);
+    * let closest_point = polygon.getClosestPoint2Edge(point,polygon.edges[closest_edge]);
+    * let normal = polygon.getNormal(closest_edge);
+    * let normal_projection = polygon.getClosestEdgeNormalProjection(point);
+    * let normal_projection_vector = polygon.getClosestEdgeNormalProjectionVector(point);
+    * let distance2edge = polygon.getDistance2Edge(point,polygon.edges[closest_edge]);
+    * let center = polygon.getCenter();
+    * let edge_midpoint = polygon.getEdgeMidpoint(closest_edge);
+    * let normals = polygon.getNormals();
+    * let closest_edge_normal_projection = polygon.getClosestEdgeNormalProjection(point);
+    */
+   // makeParticleDraggable(SVG,particle_id, particle_idx,
+  // STATE,updateState,canvas2Model,
+             //                   ){
+    // Collision handler has method updateCollisionsMap(collisions, xs, polygons, threshold)
+    // collisions is an array of type [[iP,jE,polygonObj],...]-->[collisions,new_collisions,resolved_collisions]
+    // collisions is the updated array of collisions, new and resolver are returned for debugging and visualization
+        const SVG = document.getElementById("svgMain");
+        let STATE_STORY = [];
+        function updateState(property,value,STATE){
+            STATE[property] = value;
+            
+        }        
+
+        
+            
+        function generateDummyState(){
+            // two particles with a distance constraint
+            // a polygon  on the right side
+            // xs particles positions [nparticles,2] array
+            // vs particles velocities [nparticles,2] array (lets set it to zero)
+            // masses particles masses [nparticles] array (1,1)
+            // constraints_distance distance constraints [[i,j,distance],...] array
+            // constraints_pin pin constraints [[i,point,distance],...] array, empty in this case
+            //collisions is an array of type [[iP,jE,Polidx],...] 
+            //where iP is the particle index, jE is the edge index, Polidx is the polygon index, empty at first
+            //polygons is an array of polygon vertices [[p1,p2,...],...] array
+            // lets create a square polygon
+            // Lets work in the [-1,1]x[-1,1] model space, we will transform to canvas space later
+
+        
+            let STATE = {
+                //"xs": [[-0.2,0.2],[-0.2+0.5,0.2+0.5]],
+                //3 particles
+                "xs": [[-0.2,0.2],[-0.2+0.5,0.2+0.5],[-0.2+0.5,0.2]],
+                "vs": [[0,0],[0,0],[0,0]],
+                "masses": [1,1,1],
+                "constraints_vals": [],
+                "constraints_jacobians": [],//this must be of the form [ [particlesIndices, jacobian],...]
+                "constraints_dot_jacobians": [],//this must be of the form [ [particlesIndices, jacobian],...]
+                "constraints_distance": [[0,1,0.5]],
+                "constraints_pin": [],
+                "collisions": [],
+                "new_collisions": [],//this is for debugging
+                "resolved_collisions": [],//this is for debugging
+                "polygons": [[[0,0],[0.5,0],[0.5,-0.5],[0,-0.5] ]],
+                "J": null,
+                "dotJ": null,
+                "t":0,
+                "gravity": [0.1,[0,-1]],
+                "springs": [[1,2,1,0.5]],//particle1, particle2, stiffness, restLength
+
+            };
+            //lets shift polygon points to the right with translate
+            STATE.polygons = STATE.polygons.map((polygon) => {
+                return scale(translate(polygon,[0.0,0]),2,1);
+            });
+            console.log(STATE);
+            
+            return STATE;
+        }
+
+        function rigidRectangleState(width, height,origin=[0,0]){
+        //we'll create the rectangle 4 points, and we'll use use getNeighborsDelauney to 
+        // set the distance constraints
+        let xs = [[origin[0],origin[1]],
+                  [origin[0]+width,origin[1]],
+                  [origin[0]+width,origin[1]+height],
+                  [origin[0],origin[1]+height]];
+
+        let neighs = getNeighborsDelauney(xs);
+        //neighs is a dict of particle_idx: [neighbors_idxs]
+        // we have to iterate over the keys of neighs get the distances and create the constraints
+        // to avoid duplicates we store the (idxa,idxb) visited pairs, ordered idxa < idxb
+        // so for every new pair we sort it and check if it is in the set of visited pairs
+        // if it is not we add it to the set and create the constraint
+        // we sort the pairs and turn into a string to add to the set example [1,2] => "1,2" [2,1] => "1,2"
+        let visitedPairs = new Set();
+        let constraints_distance = [];
+        for (let particle_idx in neighs){
+            let neighbors = neighs[particle_idx];
+            for (let i = 0; i < neighbors.length; i++){
+                let particle_idx2 = neighbors[i];
+                let pair = [particle_idx, particle_idx2];
+                pair.sort();
+                let pairStr = pair.join(",");
+                if (!visitedPairs.has(pairStr)){
+                    visitedPairs.add(pairStr);
+                    //particle_idx and particle_idx2 to Integer
+                    particle_idx = parseInt(particle_idx);
+                    particle_idx2 = parseInt(particle_idx2);
+                    let distance = math.distance(xs[particle_idx], xs[particle_idx2]);
+                    constraints_distance.push([particle_idx, particle_idx2, distance]);
+                }
+            }
+        }
+        
+
+      
+        let STATE = {
+            neighbors: neighs,
+            xs: xs,
+            constraints_distance: constraints_distance,
+            constraints_pin: [],
+            "constraints_values": [],
+            "constraints_mae": 0,
+            "targets": [],
+            "masses": [1,1,1,1],
+            "vs": [[0,0],[0,0],[0,0],[0,0]],
+            "collisions": [],
+            "polygons": [],
+            "J": null,
+            "dotJ": null,
+            "t":0,
+            "gravity": [0.1,[0,-1]],
+            "polygons": [[[0,0],[0.5,0],[0.5,-0.5],[0,-0.5] ]],
+            "springs2points": []
+
+
+        };
+
+        STATE.xs = translate(STATE.xs,[-0.4,0]);
+
+        STATE.polygons = STATE.polygons.map((polygon) => {
+                return rotateCOM(scale(polygon,5,1),30);
+            });
+        return STATE;
+    }
+
+    //lets create a state with a dumbell and a polygon ground
+    function dumbellGroundState(){
+        // just two masses and a distance constraint
+        let STATE = {
+            "xs": [[-0.2,0.2],[-0.2+0.5,0.2+0.5]],
+            "vs": [[0,0],[0,0]],
+            "masses": [1,10],
+            "constraints_vals": [],
+            "constraints_jacobians": [],//this must be of the form [ [particlesIndices, jacobian],...]
+            "constraints_dot_jacobians": [],//this must be of the form [ [particlesIndices, jacobian],...]
+            "constraints_distance": [[0,1,0.5]],
+            "constraints_pin": [],
+            "collisions": [],
+            "new_collisions": [],//this is for debugging
+            "resolved_collisions": [],//this is for debugging
+            "polygons": [[[0,0],[0.5,0],[0.5,-0.5],[0,-0.5] ]],
+            "J": null,
+            "dotJ": null,
+            "t":0,
+            "gravity": [0.1,[0,-1]],
+            "springs": [],//particle1, particle2, stiffness, restLength
+
+        };
+        STATE.polygons = STATE.polygons.map((polygon) => {
+                return rotateCOM(scale(polygon,5,1),0);
+            });
+        return STATE;
+    }
+
+
+    // lets create a state with particles arranged in a circle
+    // for this we simply select an origin and place particles every x angle
+    function circleParticlesState(radius, nparticles, origin = [0,0]){
+        let angle = 2*Math.PI/nparticles;
+        let xs = [];
+        xs.push(origin);
+        for (let i = 0; i < nparticles; i++){
+            let x = origin[0] + radius*Math.cos(i*angle);
+            let y = origin[1] + radius*Math.sin(i*angle);
+            xs.push([x,y]);
+        }
+
+        let neighs = getNeighborsDelauney(xs);
+        let visitedPairs = new Set();
+        let constraints_distance = [];
+        for (let particle_idx in neighs){
+            let neighbors = neighs[particle_idx];
+            for (let i = 0; i < neighbors.length; i++){
+                let particle_idx2 = neighbors[i];
+                let pair = [particle_idx, particle_idx2];
+                pair.sort();
+                let pairStr = pair.join(",");
+                if (!visitedPairs.has(pairStr)){
+                    visitedPairs.add(pairStr);
+                    //particle_idx and particle_idx2 to Integer
+                    particle_idx = parseInt(particle_idx);
+                    particle_idx2 = parseInt(particle_idx2);
+                    let distance = math.distance(xs[particle_idx], xs[particle_idx2]);
+                    constraints_distance.push([particle_idx, particle_idx2, distance]);
+                }
+            }
+        }
+
+
+        let STATE = {
+            "xs": xs,
+            "vs": xs.map((x) => {return [0,0]}),
+            "masses": xs.map((x) => {return 1}),
+            "constraints_vals": [],
+            "constraints_jacobians": [],//this must be of the form [ [particlesIndices, jacobian],...]
+            "constraints_dot_jacobians": [],//this must be of the form [ [particlesIndices, jacobian],...]
+            "constraints_distance": constraints_distance,
+            "constraints_pin": [],
+            "collisions": [],
+            "new_collisions": [],//this is for debugging
+            "resolved_collisions": [],//this is for debugging
+            "polygons": [[[0,0],[0.5,0],[0.5,-0.5],[0,-0.5] ]],
+            "J": null,
+            "dotJ": null,
+            "t":0,
+            "gravity": [0.1,[0,-1]],
+            "springs": [],//particle1, particle2, stiffness, restLength
+
+        };
+
+        STATE.polygons = STATE.polygons.map((polygon) => {
+                return rotateCOM(scale(polygon,5,1),30);
+            });
+        return STATE;
+    }
+
+
+   
+        
+      //  let STATE = generateDummyState();
+      // let STATE = rigidRectangleState(0.2,0.2,[0.2,0.5]);
+       // let STATE = dumbellGroundState();
+       let STATE = circleParticlesState(0.4, 5, origin = [0.3,0.6])
+        let colHandler = new CollisionHandler();
+        let drawer = new Drawer(SVG);
+        drawer.drawState(STATE);
+
+        let particles = SVG.querySelectorAll(".particle");
+        let [canvasX, canvasY] = [SVG.width.baseVal.value, SVG.height.baseVal.value];
+        let [modelX, modelY] = [2,2];
+        let canvas2ModelCallback = (pointCanvas) => {
+            return drawer.canvas2Model(pointCanvas,true);
+
+        }
+
+        let displayStateCallback = (STATE) => {
+            //lets cap the decimals of the state
+            let STATEcopy = JSON.parse(JSON.stringify(STATE));
+            STATEcopy.xs = capDecimalsArray(STATEcopy.xs,2);
+            STATEcopy.vs = capDecimalsArray(STATEcopy.vs,2);
+            STATEcopy.constraints_vals = capDecimalsArray(STATEcopy.constraints_vals,2);
+            STATEcopy.dot_J = capDecimalsArray(STATEcopy.dot_J,2);
+            STATEcopy.J = capDecimalsArray(STATEcopy.J,2);
+            STATEcopy.lagrange_multipliers = capDecimalsArray(STATEcopy.lagrange_multipliers,2);
+            STATEcopy.total_forces = capDecimalsArray(STATEcopy.total_forces,2);
+            displayObjectInDiv(STATEcopy, "debug-info");
+        }
+
+        let PARAMETERS = {
+            "dt": 0.01,
+            "alpha":10,
+            "beta":10,
+            "collisionThreshold": 0.05,
+            "muFriction": 0.6,
+        }
+
+        let lastTime = performance.now();
+        let frames = 0;
+        let fps = 0;
+
+        let mainCallback = () => {
+           
+            console.log(PARAMETERS.dt)
+            let newSTATE = stepSemiEulerContact(STATE,PARAMETERS);
+            STATE_STORY.push(newSTATE);
+            for (let key in newSTATE){
+                updateState(key,newSTATE[key],STATE);
+            }
+            displayStateCallback(STATE)
+
+            //lets draw the state
+            drawer.drawState(STATE);
+
+            let currentTime = performance.now();
+            let deltaTime = currentTime - lastTime;
+            frames++;
+            if (deltaTime > 1000){
+                fps =1000*frames/deltaTime;
+                frames = 0;
+                lastTime = currentTime;
+            }
+            document.getElementById("fps").innerHTML = `FPS: ${fps.toFixed(2)}`;
+
+
+        }
+
+        let callbacksParticles = [displayStateCallback, mainCallback];
+       // particles.forEach((particle,idx) => {
+         //   makeParticleDraggable(SVG,particle.id, idx, STATE, updateState,
+        //                         canvas2ModelCallback,  [displayStateCallback, mainCallback]);
+        //});
+        //particleInteractionMouse(SVG, particle_id, canvas2Model, mouseMoveCallbacks = [],mouseUpCallbacks = []), callbacks must have the signature 
+        //callback(mouseCoords, particle_idx)
+        //lets add a callback to attach a spring from the selected particle to the mouse
+        // and another to remove the spring when the mouse is released
+
+        function mouseMoveSpringCallback(mouseCoords, particle_idx){
+            //we attach a mouseSpring text tag to the last entry of springs2points so we can identify it for update and removal
+            // we iter over the springs2points, looking for an array with 5 elements, the last one being a mouseSpring tag
+            // if we find it we update the spring to the mouse position
+            // if we don't find it we create a new spring
+            let spring = STATE.springs2points.find((spring) => {
+                return spring.length == 5 && spring[4] == "mouseSpring";
+            });
+            if (spring){
+                spring[1] = mouseCoords;
+            }else{
+                STATE.springs2points.push([particle_idx,mouseCoords,5,0.1,"mouseSpring"]);
+            }
+
+        }
+
+        function mouseUpSpringCallback(){
+            //we remove the mouseSpring spring
+            STATE.springs2points = STATE.springs2points.filter((spring) => {
+                return spring.length != 5 || spring[4] != "mouseSpring";
+            });
+
+
+        }
+
+        let ORIGINAldt = PARAMETERS.dt;
+        function mouseMoveCallback2(mouseCoords, particle_idx){
+            //we run the main callback to update the state
+            // but with slower dt for inspection
+          //  PARAMETERS.dt = 0.0005;
+            mainCallback();
+        }
+
+        function mouseUpCallback2(){
+            //we restore the dt
+            PARAMETERS.dt = ORIGINAldt;
+        }
+        particles.forEach((particle,idx) => {
+            particleInteractionMouse(SVG, particle.id, canvas2ModelCallback, [mouseMoveSpringCallback], [mouseUpSpringCallback]);
+        });
+
+        window.STATE = STATE;
+        displayMouseCoords(SVG, canvas2ModelCallback)
+
+        document.getElementById("Play").addEventListener("click", () => {
+            window.intervalId = setInterval(mainCallback, 10);
+        });
+
+        document.getElementById("Pause").addEventListener("click", () => {
+            clearInterval(window.intervalId);
+        });
+
+        document.getElementById("Step").addEventListener("click", () => {
+            mainCallback();
+        });
+
+        document.getElementById("plotStory").addEventListener("click", () => {
+            let plotsDiv = document.getElementById("plots");
+            plotsDiv.innerHTML = "";
+            let keys = Object.keys(STATE_STORY[0]);
+            //lets plot the velocities STATE.vs  against time
+            let time = STATE_STORY.map((state) => {
+                return state.t;
+            });
+            let velocities = STATE_STORY.map((state) => {
+                return state.vs;
+            });
+
+            let traces = [];
+            let nparticles = velocities[0].length;
+            //lets plot vy only
+            console.log("TIME, VS", time, velocities)
+            for (let i = 0; i < nparticles; i++){
+                let vy = velocities.map((vel) => {
+                    return vel[i][1];
+                });
+                let trace = {
+                    x: time,
+                    y: vy,
+                    mode: 'lines',
+                    name: `Particle ${i} vy`,
+                };
+                traces.push(trace);
+            }
+            Plotly.newPlot(plotsDiv, traces);
+        });
+
+
+        document.getElementById("sliderStory").addEventListener("click", () => {
+            let slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = 0;
+            slider.max = STATE_STORY.length - 1;
+            slider.value = 0;
+            slider.step = 1;
+            slider.addEventListener("input", (event) => {
+                let idx = parseInt(event.target.value);
+                displayStateCallback(STATE_STORY[idx]);
+                drawer.drawState(STATE_STORY[idx]);
+            });
+            document.getElementById("controls").appendChild(slider);
+        });
+        </script>
+    </body>
+</html>

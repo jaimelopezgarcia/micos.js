@@ -5,6 +5,8 @@
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.4/math.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/delaunator@5.0.0/delaunator.min.js"></script>
+
 </head>
 
 <style>
@@ -15,39 +17,54 @@
 
     body{
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr 1fr 1fr;
     }
 
     .main_canvas{
-        display: grid;
-        grid-template-rows: 1fr 1fr;
-        grid-gap: 10px;
-        padding: 10px;
+
+        grid-gap: 0px;
+        padding: 0px;
+        
     }
 
     .svg{
         border: 1px solid black;
-        width: 400px;
-        height: 400px;
+        width: 800px;
+        height: 800px;
+        margin: 0px;
     }
 
     .slider{
         width: 100%;
+        margin-top: 0px;
     }
 
 
     .plots_panel{
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        grid-gap: 10px;
-        padding: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(800px, 1fr));
+        grid-gap: 1px;
+        padding: 1px;
         overflow: auto;
+    }
+
+    .state_info_panel{
+        border: 1px solid black;
+        width: 300px;
+        height: 500px;
+        overflow: auto;
+
+        
     }
 
 </style>
 <body>
     <script type = "module">
-    import {integrateSystem, pendulumSystemConfig, doublePendulumSystemConfig,initState} from "./solver.js";
+    import {integrateSystem, pendulumSystemConfig,
+         doublePendulumSystemConfig,initState,particleOnStairs, tumblingBoxSystemConfig,
+         tumblingBoxAnalyticalSolution,
+          dumbellSlidingOnWallSystemConfig, dumbellSlidingOnWallAnalyticalSolution} from "./solver.js";
+    import {displayObjectInDiv, displayMouseCoords} from "./utils.js";
     import {Drawer} from "./drawing.js"; //drawer.drawState(STATE,VISUAL_OPTIONS,particles_group_id); is the function to draw the state of the system
     import {calculateCOM, calculateKineticEnergy} from "./solver.js";
     import {pendulumAnalyticalSolution} from "./solver.js";//pendulumAnalyticalSolution(thetaO, g, L, tarray) returns [xs,vs]
@@ -76,8 +93,10 @@
             var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
             svg.id = model_name + "_svg";
             //lets set width and height of the svg
-            svg.setAttribute("width", 400);
-            svg.setAttribute("height", 400);
+
+            //lets add the class main_canvas_svg
+            svg.setAttribute("class", "svg");
+
             main_canvas.appendChild(svg);
 
             var slider = document.createElement("input");
@@ -88,6 +107,13 @@
             slider.id = model_name + "_slider";
             slider.className = "slider";
             main_canvas.appendChild(slider);
+
+
+            var state_info_panel = document.createElement("div");
+            state_info_panel.id = model_name + "_state_info_panel";
+            state_info_panel.className = "state_info_panel";
+            document.body.appendChild(state_info_panel);
+
 
 
 
@@ -262,7 +288,7 @@
             let pendulumSVG = document.getElementById("pendulum_svg");
             let drawerPendulum =new Drawer(pendulumSVG,[-2,2],[-2,2]);
             let pendulumParticlesGroupId = "pendulum_particles"
-            drawerPendulum.drawState(pendulumSTATE0, VISUAL_OPTIONS, pendulumParticlesGroupId);
+            drawerPendulum.drawState(pendulumSTATE0,pendulumParticlesGroupId,);
             //lets add a callback to the slider
             let slider = document.getElementById("pendulum_slider");
             // lets set min and max values of the slider
@@ -271,19 +297,842 @@
             slider.addEventListener("input", function(){
 
                 let index = parseInt(this.value);
-                drawerPendulum.drawState(pendulumStateStory[index], VISUAL_OPTIONS, pendulumParticlesGroupId);
+                drawerPendulum.drawState(pendulumStateStory[index], pendulumParticlesGroupId,undefined,VISUAL_OPTIONS);
             });
         }
 
+    function particleOnStairsfun(TIME,widthStep,heightStep,vx,nStepsStair,gravity,mass){
+        //lets copy Visual optinos
+        let vOpts = JSON.parse(JSON.stringify(VISUAL_OPTIONS));
+        vOpts.particle_density = 0.02;
+        let STATE0 = particleOnStairs(widthStep,heightStep,vx,nStepsStair,gravity,mass);
+        STATE0 = initState(STATE0, PARAMETERS);
+        let nsteps = TIME/PARAMETERS.dt;
+        let stateStory = integrateSystem(STATE0, PARAMETERS, nsteps);
+        //lets get the panel where we'll draw the systems and the plots, if it doesn't exist, create it
 
-    let PARAMETERS = {"dt": 0.01, "alpha":1,"beta":1};
+        let svgName = "particleOnStairs_svg";
+        let svgMain = document.getElementById(svgName);
+        if(svgMain == null){
+            createModelPanels("particleOnStairs");
+            svgMain = document.getElementById(svgName);
+        }
+
+        let drawer = new Drawer(svgMain, [-2,15],[-6,6]);
+        let particlesGroupId = "particleOnStairs_particles";
+        let polygonsGroupId = "particleOnStairs_polygons";
+        drawer.drawState(stateStory[0], particlesGroupId, polygonsGroupId, vOpts);
+        let slider = document.getElementById("particleOnStairs_slider");
+        slider.min = 0;
+        slider.max = nsteps - 1;
+        slider.addEventListener("input", function(){
+            let index = parseInt(this.value);
+            let STATE = stateStory[index];
+            drawer.drawState(STATE, particlesGroupId, polygonsGroupId, vOpts);
+            // we display the STATE[index] in the state_info_panel
+            let stateInfoId = "particleOnStairs_state_info_panel";
+            displayObjectInDiv(STATE, stateInfoId);
+            
+        });
+
+        function canvas2ModelCallback(points){
+            return drawer.canvas2Model(points, true)// true for shifing origin, false if transforming forces
+        }
+        displayMouseCoords(svgMain,  canvas2ModelCallback )
+        return stateStory;
+
+
+
+        
+
+    }
+
+    function plotsTumblingBox(stateStorySolver, stateStoryAnalytical){
+        //we'll plot theta vs time for both solutions
+        // where theta is the angle of the [3-0] edge of the box with the horizontal
+        //3 is the pivot point, 0 is the 0 vertex of the box
+        // we'll also plot the kinetic energy vs time for both solutions
+        //we'll plot constraint forces on point 0 vs time for the solver solution and the analytical solution
+        // we'll also plot the module of the velocity for particle 0 vs time for both solutions
+
+        let timeArray = stateStorySolver.map(s => s.time);
+        //times will match
+        // for the angle we have to calculate po-p3 and get the angle with [1,0] for solver and analytical
+        let anglesSolver = stateStorySolver.map(s => {
+            let p0 = s.xs[0];
+            let p3 = s.xs[3];
+            let v = math.subtract(p0, p3);
+            let angle =  math.atan2(v[1], v[0]);
+            let angledeg = angle * 180/Math.PI;
+            angledeg = 180 - angledeg;
+            return angledeg;
+        });
+
+        let anglesAnalytical = stateStoryAnalytical.map(s => {
+            let p0 = s.xs[0];
+            let p3 = s.xs[3];
+            let v = math.subtract(p0, p3);
+            let angle =  math.atan2(v[1], v[0]);
+            let angledeg = angle * 180/Math.PI;
+            angledeg = 180 - angledeg;
+            return angledeg;
+        });
+
+        let kineticEnergiesSolver = stateStorySolver.map(s => calculateKineticEnergy(s.vs, s.masses));
+        let kineticEnergiesAnalytical = stateStoryAnalytical.map(s => calculateKineticEnergy(s.vs, s.masses));
+
+        let constraintForcesSolver = stateStorySolver.map(s => math.norm(s.constraint_forces[0]));
+        let constraintForcesAnalytical = stateStoryAnalytical.map(s => math.norm(s.constraint_forces[0]));
+
+        let velocitiesSolver = stateStorySolver.map(s => math.norm(s.vs[0]));
+        let velocitiesAnalytical = stateStoryAnalytical.map(s => math.norm(s.vs[0]));
+
+        //lets calculate as well potential energy
+        // it is just for each particle sum_i mass_ixs[i][1]*g
+        //we use as reference the first value of the potential energy, we substract it from all values
+        // we then plot, kinetic, potential and total energy vs time
+        let g = stateStorySolver[0].gravity[0];
+        let potentialEnergiesSolver = stateStorySolver.map(s => {
+            let potential = 0;
+            for(let i = 0; i < s.xs.length; i++){
+                potential += s.masses[i]*s.xs[i][1]*g;
+            }
+            return potential;
+        });
+
+        let potentialEnergiesAnalytical = stateStoryAnalytical.map(s => {
+            let potential = 0;
+            for(let i = 0; i < s.xs.length; i++){
+                potential += s.masses[i]*s.xs[i][1]*g;
+            }
+            return potential;
+        });
+
+        //lets substract the first value of the potential energy
+        let potentialEnergiesSolver0 = potentialEnergiesSolver[0];
+        let potentialEnergiesAnalytical0 = potentialEnergiesAnalytical[0];
+        potentialEnergiesSolver = potentialEnergiesSolver.map(p => p - potentialEnergiesSolver0);
+        potentialEnergiesAnalytical = potentialEnergiesAnalytical.map(p => p - potentialEnergiesAnalytical0);
+
+        let totalEnergiesSolver = kineticEnergiesSolver.map((ke, index) => ke + potentialEnergiesSolver[index]);
+        let totalEnergiesAnalytical = kineticEnergiesAnalytical.map((ke, index) => ke + potentialEnergiesAnalytical[index]);
+
+
+        //lets plot aswell constraint_vals, only for the solver solution the analytical sol
+        // satisfies the constraints by construction
+        // constraint_vals is an array of [nconstraints]
+        // we'll plot each constraint value vs time
+        //the constraints distance are a 5val array [ (0,1), (0,2)//diag, (0,3),(1,2),(2,3)]
+
+        let constraintValsSolver = stateStorySolver.map(s => s.constraints_vals);//[tarray.length, nconstraints]
+
+        
+        
+
+        let parentDiv = document.getElementById("tumblingBox_plots_panel");
+
+        let divAngles = document.createElement("div");
+
+
+        // lets set width and height of the div
+
+        divAngles.id = "tumblingBox_divAngles";
+        parentDiv.appendChild(divAngles);
+        let divE = document.createElement("div");
+        divE.id = "tumblingBox_divE";//energies
+        parentDiv.appendChild(divE);
+        let divCF = document.createElement("div");
+        divCF.id = "tumblingBox_divCF";
+        parentDiv.appendChild(divCF);
+        let divVelocities = document.createElement("div");
+        divVelocities.id = "tumblingBox_divVelocities";
+        parentDiv.appendChild(divVelocities);
+
+        let divConstraintVals = document.createElement("div");
+        divConstraintVals.id = "tumblingBox_divConstraintVals";
+        parentDiv.appendChild(divConstraintVals);
+
+        let traceConstraintVals = [];
+
+        let ConstraintValsNames = ["(0,1)", "(0,2)", "(0,3)", "(1,2)", "(2,3)"];
+        for(let i = 0; i < constraintValsSolver[0].length; i++){
+            let trace = {
+                x: timeArray,
+                //lets plot the sqrt( abs( constraintVals[i] ) )
+                y: constraintValsSolver.map(vals => Math.sqrt(Math.abs(vals[i])) ),
+                mode: "lines",
+                name: "sqrtAbsConstraint " + ConstraintValsNames[i],
+            };
+            traceConstraintVals.push(trace);
+        }
+
+        let layout_constraintVals = {
+            title: "Constraint Vals vs Time",
+            width: 800,
+            height: 400,
+        };
+
+        Plotly.newPlot("tumblingBox_divConstraintVals", traceConstraintVals, layout_constraintVals);
+
+        let traceAnglesSolver = {
+            x: timeArray,
+            y: anglesSolver,
+            mode: "lines",
+            name: "Angle Solver",
+        };
+
+        let traceAnglesAnalytical = {
+            x: timeArray,
+            y: anglesAnalytical,
+            mode: "lines",
+            name: "Angle Analytical",
+        };
+
+        let traceKEsolver = {
+            x: timeArray,
+            y: kineticEnergiesSolver,
+            mode: "lines",
+            name: "Kinetic Energy Solver",
+        };
+
+        let traceKEanalytical = {
+            x: timeArray,
+            y: kineticEnergiesAnalytical,
+            mode: "lines",
+            name: "Kinetic Energy Analytical",
+        };
+
+        let tracePEsolver = {
+            x: timeArray,
+            y: potentialEnergiesSolver,
+            mode: "lines",
+            name: "Potential Energy Solver",
+        };
+
+        let tracePEanalytical = {
+            x: timeArray,
+            y: potentialEnergiesAnalytical,
+            mode: "lines",
+            name: "Potential Energy Analytical",
+        };
+
+        let traceTEsolver = {
+            x: timeArray,
+            y: totalEnergiesSolver,
+            mode: "lines",
+            name: "Total Energy Solver",
+        };
+
+        let traceTEanalytical = {
+            x: timeArray,
+            y: totalEnergiesAnalytical,
+            mode: "lines",
+            name: "Total Energy Analytical",
+        };
+
+
+
+        let traceCFsolver = {
+            x: timeArray,
+            y: constraintForcesSolver,
+            mode: "lines",
+            name: "Constraint Forces Solver",
+        };
+
+        let traceCFanalytical = {
+            x: timeArray,
+            y: constraintForcesAnalytical,
+            mode: "lines",
+            name: "Constraint Forces Analytical",
+        };
+
+        let traceVelocitiesSolver = {
+            x: timeArray,
+            y: velocitiesSolver,
+            mode: "lines",
+            name: "Velocities Solver",
+        };
+
+        let traceVelocitiesAnalytical = {
+            x: timeArray,
+            y: velocitiesAnalytical,
+            mode: "lines",
+            name: "Velocities Analytical",
+        };
+
+        //layouts, with title, and width height 400 px
+
+        let layout_angle = {
+            title: "Angle vs Time",
+            width: 800,
+            height: 400,
+        };
+
+        let layout_E = {
+            title: "Energies vs Time",
+            width: 800,
+            height: 400,
+        };
+
+        let layout_cf = {
+            title: "Constraint Forces vs Time",
+            width: 800,
+            height: 400,
+        };
+
+        let layout_velocities = {
+            title: "Velocities vs Time",
+            width: 800,
+            height: 400,
+        };
+
+        let dataAngles = [traceAnglesSolver, traceAnglesAnalytical];
+        let dataE = [traceKEsolver, traceKEanalytical, tracePEsolver, tracePEanalytical, traceTEsolver, traceTEanalytical];
+
+
+        let dataCF = [traceCFsolver, traceCFanalytical];
+        let dataVelocities = [traceVelocitiesSolver, traceVelocitiesAnalytical];
+
+        Plotly.newPlot("tumblingBox_divAngles", dataAngles, layout_angle);
+        Plotly.newPlot("tumblingBox_divE", dataE, layout_E);
+        Plotly.newPlot("tumblingBox_divCF", dataCF, layout_cf);
+        Plotly.newPlot("tumblingBox_divVelocities", dataVelocities, layout_velocities);
+
+
+    }
+
+    function tumblingBox(side,g,Lwedge,angle,TIME, PARAMETERS, VISUAL_OPTIONS){
+        let svgName = "tumblingBox_svg";
+        let svgMain = document.getElementById(svgName);
+        if(svgMain == null){
+            createModelPanels("tumblingBox");
+            svgMain = document.getElementById(svgName);
+        }
+
+        let tumblingBoxSTATE0 = tumblingBoxSystemConfig(side, g, Lwedge, angle);
+        let particlesGroupId = "tumblingBox_particles";
+        let polygonsGroupId = "tumblingBox_polygons";
+        tumblingBoxSTATE0 = initState(tumblingBoxSTATE0, PARAMETERS);//this calculates forces
+        let nsteps = TIME/PARAMETERS.dt;
+        let tumblingBoxStateStory = integrateSystem(tumblingBoxSTATE0, PARAMETERS, nsteps);
+
+
+        let drawer = new Drawer(svgMain, [-2,2],[-2,2]);
+
+
+        drawer.drawState(tumblingBoxStateStory[0], particlesGroupId, polygonsGroupId, VISUAL_OPTIONS);
+
+
+
+        //lets get the analytical solution tumblingBoxAnalyticalSolution(side, g, angle, tarray)
+        //this returns a stateStory that can bee compared with the solver
+
+        let tarray = tumblingBoxStateStory.map(s => s.time);
+        let tcopy = JSON.parse(JSON.stringify(tarray));
+        let tumblingBoxStateStoryAnalytical = tumblingBoxAnalyticalSolution(side, g, angle, tcopy);
+
+        plotsTumblingBox(tumblingBoxStateStory, tumblingBoxStateStoryAnalytical);
+
+
+        let slider = document.getElementById("tumblingBox_slider");
+        slider.min = 0;
+        slider.max = nsteps - 1;
+        slider.addEventListener("input", function(){
+            let index = parseInt(this.value);
+            let STATE = tumblingBoxStateStory[index];
+            drawer.drawState(STATE, particlesGroupId, polygonsGroupId, VISUAL_OPTIONS);
+            // we display the STATE[index] in the state_info_panel
+            let stateInfoId = "tumblingBox_state_info_panel";
+            displayObjectInDiv(STATE, stateInfoId);
+            
+        });
+
+        function canvas2ModelCallback(points){
+            return drawer.canvas2Model(points, true)// true for shifing origin, false if transforming forces
+        }
+
+        displayMouseCoords(svgMain,  canvas2ModelCallback )
+
+
+
+        return tumblingBoxStateStory;
+
+    }
+
+
+    function plotDumbellSliding(stateStorySolver,stateStoryAnalytical){
+
+
+        let timeArray = stateStorySolver.map(s => s.time);
+        //times will match
+        // for the angle we have to calculate po-p3 and get the angle with [1,0] for solver and analytical
+        let anglesSolver = stateStorySolver.map(s => {
+            let p0 = s.xs[0];
+            let p3 = s.xs[1];
+            let v = math.subtract(p0, p3);
+            let angle =  math.atan2(v[1], v[0]);
+            let angledeg = angle * 180/Math.PI;
+            angledeg = 180 - angledeg;
+            return angledeg;
+        });
+
+        let anglesAnalytical = stateStoryAnalytical.map(s => {
+            let p0 = s.xs[0];
+            let p3 = s.xs[1];
+            let v = math.subtract(p0, p3);
+            let angle =  math.atan2(v[1], v[0]);
+            let angledeg = angle * 180/Math.PI;
+            angledeg = 180 - angledeg;
+            return angledeg;
+        });
+
+        let kineticEnergiesSolver = stateStorySolver.map(s => calculateKineticEnergy(s.vs, s.masses));
+        let kineticEnergiesAnalytical = stateStoryAnalytical.map(s => calculateKineticEnergy(s.vs, s.masses));
+
+        let constraintForcesSolver = stateStorySolver.map(s => math.norm(s.constraint_forces[0]));
+        let constraintForcesAnalytical = stateStoryAnalytical.map(s => math.norm(s.constraint_forces[0]));
+
+        let velocitiesSolver = stateStorySolver.map(s => math.norm(s.vs[0]));
+        let velocitiesAnalytical = stateStoryAnalytical.map(s => math.norm(s.vs[0]));
+
+        //lets calculate as well potential energy
+        // it is just for each particle sum_i mass_ixs[i][1]*g
+        //we use as reference the first value of the potential energy, we substract it from all values
+        // we then plot, kinetic, potential and total energy vs time
+        let g = stateStorySolver[0].gravity[0];
+        let potentialEnergiesSolver = stateStorySolver.map(s => {
+            let potential = 0;
+            for(let i = 0; i < s.xs.length; i++){
+                potential += s.masses[i]*s.xs[i][1]*
+
+
+                g;
+                }
+            return potential;
+        });
+
+        let potentialEnergiesAnalytical = stateStoryAnalytical.map(s => {
+            let potential = 0;
+            for(let i = 0; i < s.xs.length; i++){
+                potential += s.masses[i]*s.xs[i][1]*g;
+            }
+            return potential;
+        });
+
+        //lets substract the first value of the potential energy
+
+        let potentialEnergiesSolver0 = potentialEnergiesSolver[0];
+
+        let potentialEnergiesAnalytical0 = potentialEnergiesAnalytical[0];
+
+        potentialEnergiesSolver = potentialEnergiesSolver.map(p => p - potentialEnergiesSolver0);
+
+        potentialEnergiesAnalytical = potentialEnergiesAnalytical.map(p => p - potentialEnergiesAnalytical0);
+
+        let totalEnergiesSolver = kineticEnergiesSolver.map((ke, index) => ke + potentialEnergiesSolver[index]);
+
+        let totalEnergiesAnalytical = kineticEnergiesAnalytical.map((ke, index) => ke + potentialEnergiesAnalytical[index]);
+
+        //lets plot aswell constraint_vals, only for the solver solution the analytical sol
+
+        // satisfies the constraints by construction
+
+        // constraint_vals is an array of [nconstraints]
+
+        // we'll plot each constraint value vs time
+
+        //the constraints distance are a 5val array [ (0,1), (0,2)//diag, (0,3),(1,2),(2,3)]
+
+        let constraintValsSolver = stateStorySolver.map(s => s.constraints_vals);//[tarray.length, nconstraints]
+
+        let parentDiv = document.getElementById("dumbellSliding_plots_panel");
+
+        let divAngles = document.createElement("div");
+
+        // lets set width and height of the div
+
+        divAngles.id = "dumbellSliding_divAngles";
+
+        parentDiv.appendChild(divAngles);
+
+        let divE = document.createElement("div");
+
+        divE.id = "dumbellSliding_divE";//energies
+
+        parentDiv.appendChild(divE);
+
+        let divCF = document.createElement("div");
+
+        divCF.id = "dumbellSliding_divCF";
+
+        parentDiv.appendChild(divCF);
+
+        let divVelocities = document.createElement("div");
+
+        divVelocities.id = "dumbellSliding_divVelocities";
+
+        parentDiv.appendChild(divVelocities);
+
+        let divConstraintVals = document.createElement("div");
+
+        divConstraintVals.id = "dumbellSliding_divConstraintVals";
+
+        parentDiv.appendChild(divConstraintVals);
+
+        let traceConstraintVals = [];
+
+        let ConstraintValsNames = ["(0,1)"];
+
+        //only the first constraint
+
+        for(let i = 0; i < constraintValsSolver[0].length; i++){
+
+            let trace = {
+
+                x: timeArray,
+
+                //lets plot the sqrt( abs( constraintVals[i] ) )
+
+                y: constraintValsSolver.map(vals => Math.sqrt(Math.abs(vals[i])) ),
+
+                mode: "lines",
+
+                name: "sqrtAbsConstraint " + ConstraintValsNames[i],
+
+            };
+
+            traceConstraintVals.push(trace);
+
+        }
+
+        let layout_constraintVals = {
+
+            title: "Constraint Vals vs Time",
+
+            width: 800,
+
+            height: 400,
+
+        };
+
+        Plotly.newPlot("dumbellSliding_divConstraintVals", traceConstraintVals, layout_constraintVals);
+
+        let traceAnglesSolver = {
+
+            x: timeArray,
+
+            y: anglesSolver,
+
+            mode: "lines",
+
+            name: "Angle Solver",
+
+        };
+
+        let traceAnglesAnalytical = {
+
+            x: timeArray,
+
+            y: anglesAnalytical,
+
+            mode: "lines",
+
+            name: "Angle Analytical",
+
+        };
+
+        let traceKEsolver = {
+
+            x: timeArray,
+
+            y: kineticEnergiesSolver,
+
+            mode: "lines",
+
+            name: "Kinetic Energy Solver",
+
+        };
+
+        let traceKEanalytical = {
+
+            x: timeArray,
+
+            y: kineticEnergiesAnalytical,
+
+            mode: "lines",
+
+            name: "Kinetic Energy Analytical",
+
+        };
+
+        let tracePEsolver = {
+
+            x: timeArray,
+
+            y: potentialEnergiesSolver,
+
+            mode: "lines",
+
+            name: "Potential Energy Solver",
+
+        };
+
+        let tracePEanalytical = {
+
+            x: timeArray,
+
+            y: potentialEnergiesAnalytical,
+
+            mode: "lines",
+
+            name: "Potential Energy Analytical",
+
+        };
+
+        let traceTEsolver = {
+
+            x: timeArray,
+
+            y: totalEnergiesSolver,
+
+            mode: "lines",
+
+            name: "Total Energy Solver",
+
+        };
+
+        let traceTEanalytical = {
+
+            x: timeArray,
+
+            y: totalEnergiesAnalytical,
+
+            mode: "lines",
+
+            name: "Total Energy Analytical",
+
+        };
+
+
+        let traceCFsolver = {
+
+            x: timeArray,
+
+            y: constraintForcesSolver,
+
+            mode: "lines",
+
+            name: "Constraint Forces Solver",
+
+        };
+
+        let traceCFanalytical = {
+
+            x: timeArray,
+
+            y: constraintForcesAnalytical,
+
+            mode: "lines",
+
+            name: "Constraint Forces Analytical",
+
+        };
+
+        let traceVelocitiesSolver = {
+
+            x: timeArray,
+
+            y: velocitiesSolver,
+
+            mode: "lines",
+
+            name: "Velocities Solver",
+
+        };
+
+        let traceVelocitiesAnalytical = {
+
+            x: timeArray,
+
+            y: velocitiesAnalytical,
+
+            mode: "lines",
+
+            name: "Velocities Analytical",
+
+        };
+
+        //layouts, with title, and width height 400 px
+
+        let layout_angle = {
+
+            title: "Angle vs Time",
+
+            width: 800,
+
+            height: 400,
+
+        };
+
+        let layout_E = {
+
+            title: "Energies vs Time",
+
+            width: 800,
+
+            height: 400,
+
+        };
+
+        let layout_cf = {
+
+            title: "Constraint Forces vs Time",
+
+            width: 800,
+
+            height: 400,
+
+        };
+
+        let layout_velocities = {
+
+            title: "Velocities vs Time",
+
+            width: 800,
+
+            height: 400,
+
+        };
+
+        let dataAngles = [traceAnglesSolver, traceAnglesAnalytical];
+
+        let dataE = [traceKEsolver, traceKEanalytical, tracePEsolver, tracePEanalytical, traceTEsolver, traceTEanalytical];
+
+        let dataCF = [traceCFsolver, traceCFanalytical];
+
+        let dataVelocities = [traceVelocitiesSolver, traceVelocitiesAnalytical];
+
+        Plotly.newPlot("dumbellSliding_divAngles", dataAngles, layout_angle);
+
+        Plotly.newPlot("dumbellSliding_divE", dataE, layout_E);
+
+        Plotly.newPlot("dumbellSliding_divCF", dataCF, layout_cf);
+
+        Plotly.newPlot("dumbellSliding_divVelocities", dataVelocities, layout_velocities);
+
+
+
+    }
+
+
+    //lets make a general function that will plot state story magnitudes for different stateStory arrays
+    //to avoid repeating code
+
+   
+
+
+
+    function dumbellSliding(L,mass1,mass2,angle,g,TIME, PARAMETERS, VISUAL_OPTIONS){
+        let svgName = "dumbellSliding_svg";
+        let svgMain = document.getElementById(svgName);
+        if(svgMain == null){
+            createModelPanels("dumbellSliding");
+            svgMain = document.getElementById(svgName);
+        }
+
+        let dumbellSTATE0 = dumbellSlidingOnWallSystemConfig(L, mass1, mass2, angle,g);
+        dumbellSTATE0 = initState(dumbellSTATE0, PARAMETERS);//this calculates forces
+        let nsteps = TIME/PARAMETERS.dt;
+
+
+        let dumbellStateStory = integrateSystem(dumbellSTATE0, PARAMETERS, nsteps);
+        let tArray = dumbellStateStory.map(s => s.time);
+        let dumbellStateStoryAnalytical = dumbellSlidingOnWallAnalyticalSolution(L, mass1, angle,g, tArray);//assumes equal masses
+
+        let particlesGroupId = "dumbellSliding_particles";
+        let polygonsGroupId = "dumbellSliding_polygons";
+        let drawer = new Drawer(svgMain, [-2,2],[-2,2]);
+        drawer.drawState(dumbellStateStory[0], particlesGroupId, polygonsGroupId, VISUAL_OPTIONS);
+
+        let particlesGroupIdAnalytical = "dumbellSliding_particles_analytical";
+        let polygonsGroupIdAnalytical = "dumbellSliding_polygons_analytical";
+        let drawerAnalytical = new Drawer(svgMain, [-2,2],[-2,2]);
+        let VISUAL_OPTIONS2 = JSON.parse(JSON.stringify(VISUAL_OPTIONS));
+        VISUAL_OPTIONS2.particle_density = 0.02;
+        VISUAL_OPTIONS2.color_particles = "green";
+        drawerAnalytical.drawState(dumbellStateStoryAnalytical[0], particlesGroupIdAnalytical, polygonsGroupIdAnalytical, VISUAL_OPTIONS2);
+
+
+        let slider = document.getElementById("dumbellSliding_slider");
+        slider.min = 0;
+        slider.max = nsteps - 1;
+        slider.addEventListener("input", function(){
+            let index = parseInt(this.value);
+            let STATE = dumbellStateStory[index];
+            drawer.drawState(STATE, particlesGroupId, polygonsGroupId, VISUAL_OPTIONS);
+            let STATEA = dumbellStateStoryAnalytical[index];
+            drawerAnalytical.drawState(STATEA, particlesGroupIdAnalytical, polygonsGroupIdAnalytical, VISUAL_OPTIONS2);
+            // we display the STATE[index] in the state_info_panel
+            let stateInfoId = "dumbellSliding_state_info_panel";
+            displayObjectInDiv(STATE, stateInfoId);
+            
+        });
+
+        function canvas2ModelCallback(points){
+            return drawer.canvas2Model(points, true)// true for shifing origin, false if transforming forces
+        }
+
+        displayMouseCoords(svgMain,  canvas2ModelCallback )
+
+        plotDumbellSliding(dumbellStateStory ,dumbellStateStoryAnalytical);
+
+        return dumbellStateStory;
+    }
+
+
+    let PARAMETERS = {"dt": 0.01, "alpha":20,"beta":20  , "collisionThreshold":0.03,"muFriction":1};
     let VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":1};
 
      window.onload = function(){
+        // PENDULUM
         createModelPanels("pendulum");  
         let [thetaO, omegaO, g, L, mass, TIME] = [Math.PI/12, 0, 9.8, 1, 1, 30];
         pendulum(thetaO, omegaO, g, L, mass, TIME, PARAMETERS, VISUAL_OPTIONS);
+
+
+        // PARTICLE ON STAIRS
+
+        let args2 = {"TIME": 10, "widthStep": 2,
+                    "heightStep": 1, "vx": 1, "nStepsStair": 10,
+                    "gravity": 1, "mass": 1};
+        PARAMETERS = {"dt": 0.01, "alpha":20,"beta":20  , "collisionThreshold":0.03,"muFriction":0.1};
+
+        let story2 = particleOnStairsfun(args2.TIME,args2.widthStep,
+                            args2.heightStep,args2.vx,args2.
+                          nStepsStair,args2.gravity,args2.mass);
+        window.story2 = story2;
+
+        // TUMBLING BOX
+
+        let args3 = {"side": 0.4, "g": 0.1, "Lwedge": 2, "angle": 49, "TIME": 7};
+        VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":0.1}; 
+        PARAMETERS = {"dt": 0.005, "alpha":60,"beta":60  , "collisionThreshold":0.001,"muFriction":2};
+
+        let story3 = tumblingBox(args3.side,args3.g,args3.Lwedge,args3.angle,args3.TIME, PARAMETERS, VISUAL_OPTIONS);
+        window.story3 = story3;
+
+
+        let args4 = {"L": 1, "mass1": 1, "mass2": 1, "angle": 45, "TIME": 5, "g": 0.1};
+        VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":0.1};
+        PARAMETERS = {"dt": 0.001, "alpha":5,"beta":5  , "collisionThreshold":0.001,"muFriction":0.0}
+        let story4 = dumbellSliding(args4.L, args4.mass1, args4.mass2, args4.angle,args4.g, args4.TIME, PARAMETERS, VISUAL_OPTIONS);
+        window.story4 = story4;
+
+
      }
+
+
+
         
     </script>
 </body>

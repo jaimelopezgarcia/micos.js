@@ -728,7 +728,7 @@ class PolygonDrawer{
 
     }
 
-    draw(svg, color = "blue", scale_normal = 1.0){
+    draw(svg, color = "blue", scale_normal = 20.0){
 
         //lets retrieve/create a polygon group that will contain the polygon and the normals and any other property
         //lets use vanilla js 
@@ -873,7 +873,8 @@ class CollisionDrawer{
         let particle = d3.select(`#${this.particles_group_id}_particle_${idx}`);
         //lets throw an error if the particle is not found
         if (particle.empty()){
-          throw new Error(`Particle with index ${idx} not found`);
+          let query = `#${this.particles_group_id}_particle_`;
+          throw new Error(`Particle with index ${idx} not found, query: ${query}`);
         }
         return particle;
       }
@@ -1110,6 +1111,7 @@ class Drawer{
         canvasSTATE.constraint_forces = this.model2Canvas(STATE.constraint_forces,false);
         canvasSTATE.contact_forces = this.model2Canvas(STATE.contact_forces,false);
         canvasSTATE.friction_forces = this.model2Canvas(STATE.friction_forces,false);
+        canvasSTATE.total_forces = this.model2Canvas(STATE.total_forces,false);
 
         //we need to transform constraints data, constraints_distance is a list of [idx1,idx2,distance]
         // we need to recalculated the distance in canvas coordinates
@@ -1223,6 +1225,12 @@ class Drawer{
       }
 
       drawSprings(svg, points1, points2, restLengths, springsGroupId){
+        //if points1 is empty we skip the drawing
+        if (points1.length !== 0){
+        // lets throw an error if the points1, points2 and restLengths are not of the same length
+        if (points1.length !== points2.length || points1.length !== restLengths.length){
+          throw new Error("points1, points2 and restLengths must be of the same length");
+        }
         //lets create the group of springs
         let springsGroup = document.getElementById(springsGroupId);
         if (springsGroup){
@@ -1237,18 +1245,34 @@ class Drawer{
       }
 
 
+      }
+
+
       drawState(STATE, particlesGroupId = "particlesGroup",
                 polygonsGroupId = "polygonsGroup",
-                 VISUAL_OPTIONS = null){
+                 VISUAL_OPTIONS = {}, springsGroupId = "springsGroup"){
 
-        if (VISUAL_OPTIONS === null){
-          VISUAL_OPTIONS = {
-            particle_density: 0.005,
-            scale_arrows_forces: 1.0,
-            color_particles: "red",
-            color_polygons: "blue",
+        // lets get the id of this.svg to use it as prefix for everything drawn here
+        let svgId = this.svg.id;
+        let particlesGroupId_full = svgId + "_" + particlesGroupId;
+        let polygonsGroupId_full = svgId + "_" + polygonsGroupId;
+        let springsGroupId_full = svgId + "_" + springsGroupId;
+
+
+        let defaultVisualOptions = {
+          particle_density: 0.005,
+          scale_arrows_forces: 1.0,
+          color_particles: "red",
+          color_polygons: "blue",
+        }
+        //we iter over defaultVisualOptions, and if the key is not in VISUAL_OPTIONS we add it
+        for (let key in defaultVisualOptions){
+          if (!VISUAL_OPTIONS.hasOwnProperty(key)){
+            VISUAL_OPTIONS[key] = defaultVisualOptions[key];
           }
         }
+
+        
         //lets check the state and initialize missing properties
         STATE = this._checkInitState(STATE);
         let s = STATE;
@@ -1259,18 +1283,18 @@ class Drawer{
         let canvasSTATE = this.state2Canvas(s);
 
         //lets draw particles
-        drawParticles(svgd3, canvasSTATE.xs, radii, particlesGroupId, VISUAL_OPTIONS["color_particles"]);
+        drawParticles(svgd3, canvasSTATE.xs, radii, particlesGroupId_full, VISUAL_OPTIONS["color_particles"]);
         //lets draw forces
         drawForces(canvasSTATE, svgd3, scaleArrowsForces);
         //lets draw constraints
         drawConstraints(canvasSTATE, svgd3);
 
-        this.drawPolygons(this.svg, canvasSTATE.polygons, polygonsGroupId, VISUAL_OPTIONS["color_polygons"]);
+        this.drawPolygons(this.svg, canvasSTATE.polygons, polygonsGroupId_full, VISUAL_OPTIONS["color_polygons"]);
 
         //lets draw the collisions
         this.drawCollisions(this.svg, canvasSTATE.new_collisions,
                             canvasSTATE.resolved_collisions,
-                              particlesGroupId, polygonsGroupId);
+                              particlesGroupId_full, polygonsGroupId_full);
 
         //lets draw the springs
         //we first extract the points and restLengths from both springs and springs2points, together with the restlengths, and we concatenate both sets
@@ -1284,7 +1308,7 @@ class Drawer{
         points1 = points1.concat(points1_2);
         points2 = points2.concat(points2_2);
         restLengths = restLengths.concat(restLengths_2);
-        this.drawSprings(this.svg, points1, points2, restLengths, "springsGroup");
+        this.drawSprings(this.svg, points1, points2, restLengths, springsGroupId_full);
     
 
       }

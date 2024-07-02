@@ -1,7 +1,13 @@
-//lets import the Constraint classes, ConstraintDistance and ConstraintPin from constraints.js
 import { ConstraintDistance, ConstraintPin } from "./constraints.js";
+import { translate, rotate, getNeighborsDelauney, calculateInertiaMoment,
+    integrateOde, integrateOdeOnTarray, isShapeEqual} from "./math_utils.js";
+//IntegrateSystem(fun, x0, tf, h) where x0 is a R dim array, fun is a R->R dxdt fun 
+// integrateOdeOnTarray(fun,xo,tArray,method = "RK4")
+//h is the time step, tf is the final time, by default uses RK4
 //all constraints must have getConstraintValue(xarray) getJacobianParticles(xarray) getDotJacobianParticles(varray) methods
-
+//function dArraydtFun(array, h){
+    //calculates numericalderivative for an array of values, assuming they come as discrete evaluation of a t->R function sampled at fixed intervals h
+    //returns an array of the same length as array
 const DEBUG = true;
 
 if (DEBUG){
@@ -692,6 +698,8 @@ class Polygon{
 
 
     getClosestPoint2Edge(point,edge){
+        //point is an array [x,y]
+        //edge is an array of two points [[x1,y1],[x2,y2]]
         //checks if the point projected     
         //on the edge is inside the edge
         //if not returns the closest point on the edge
@@ -753,10 +761,41 @@ class Polygon{
         return [closest_edge, min_distance];
     }
 
-    
+    isInteriorPoint(point){
+        //checks if a point is inside the polygon
+        //we'll use the ray casting algorithm
+        //we'll cast a ray from the point to the right (y = point[1]) and count the number of intersections
+        //if the number of intersections is odd the point is inside the polygon
+        //if the edge is vertical ,dx = 0 so we use any of the vertices x as intersection point
+        let n = this.edges.length;
+        let intersection = 0;
+        let x = point[0];
+        let y = point[1];
 
+        for (let i = 0;i<n;i++){
+            let edge = this.edges[i];
+            let [x1,y1] = edge[0];
+            let [x2,y2] = edge[1];
+
+            if (y<Math.min(y1,y2) || y>=Math.max(y1,y2)){
+                continue;
+            }
+            let xIntersection = x1 + (y-y1)*(x2-x1)/(y2-y1);
+            //because the ray is casted to the right intersection point should be greater than x
+
+            if (x<=xIntersection){
+                intersection++;
+            }
+
+
+        }
+
+        return intersection%2 == 1;
+    }
+        
 
     }
+
 
 
     class CollisionHandler{
@@ -788,7 +827,7 @@ class Polygon{
             // it's been resolved
 
         }
-        _detectNewCollisions(collisions, xs, polygons, treshold){
+        _detectNewCollisions(collisions, xs, polygons, threshold){
             //brute force method to detect new collisions
             let n = xs.length;
             let m = polygons.length;    
@@ -803,13 +842,18 @@ class Polygon{
                     let point = xs[i];
                     let polygon = polygons[j];
                     let [closest_edge,distance] = polygon.getClosestEdge(point);
-                    console.log(`COLLISION DETECTION:Particle ${i} with position ${point} closest edge ${closest_edge} distance ${distance} treehold ${treshold}`);
-                   // console.log(`Particle ${i} with position ${point} closest edge ${closest_edge} distance ${distance}`);
-                    if (distance<treshold){
+
+                    //if the distance is less than the threshold we'll add the collision
+                    //additionally to prevent tunneling we check if the particle is inside the polygon
+                    // so the conditions to add collision is isInside or distance<threshold
+                    let condition = distance<threshold || polygon.isInteriorPoint(point);
+                    if (condition){
                         let collision_id = `${i}_${closest_edge}_${polygon.id}`;
                         //if the collision is not already in the map we'll add it
                         if (!collisions.has(collision_id)){        
                             new_collisions.set(collision_id,[i,closest_edge,polygon]);
+                            console.log(`NEW COLLISION :Particle ${i} with position ${point} closest edge ${closest_edge} distance ${distance} threshold ${threshold}`);
+
                         };
                     };
                         }
@@ -829,9 +873,19 @@ class Polygon{
                 let collision = collisions.get(collisions_keys[i])
                 let [particle_index,edge_index,polygon] = collision;
                 let collision_id = `${particle_index}_${edge_index}_${polygon.id}`;
-                let current_distance = polygon.getDistance2Edge(xs[particle_index],polygon.edges[edge_index]);
-                if (current_distance>treshold){
-                    resolved_collisions.set(collision_id,collision);
+                
+                // we check if the particle is inside the polygon
+                // if it is we dont remove the collision
+                // if it is not in the interior we find the closest distance to the edge
+                // if the distance is greater than the threshold we remove the collision
+                let point = xs[particle_index];
+                if (!polygon.isInteriorPoint(point)){
+                    let current_distance = polygon.getDistance2Edge(point,polygon.edges[edge_index]);
+                    
+                    if (current_distance>treshold){
+                        resolved_collisions.set(collision_id,collision);
+                        console.log(`RESOLVED COLLISION:Particle ${particle_index} with position ${xs[particle_index]} edge ${edge_index} distance ${current_distance} treehold ${treshold}`);
+                    }
                 }
             }
 
@@ -1119,6 +1173,10 @@ function solveConstraints(J, dot_J, xarray, varray,
     let b = math.add(math.add(part1, part2), math.add(part3, part4));
     //all parts appear with a minus sign in the equation
     b = math.multiply(b,-1);
+    //lets add for stability a small value to the diagonal of A
+    //let I = math.identity(nconstraints);
+    //A = math.add(A, math.multiply(1e-5,I));
+
     let lagrange_multipliers = math.lusolve(A,b).reshape([-1]);
     // We have to clip the contact lagrange multipliers to be >= 0
     // lets get the indices of the contact constraints using the getType method
@@ -1181,7 +1239,8 @@ function calculateFrictionForces(lagrangeMultipliersContact, varray, collisions,
         let VparticleTangent = math.subtract(Vparticle, math.multiply(math.dot(normal,Vparticle),normal));
         let Vt = math.norm(VparticleTangent);
         let normalForce = lagrangeMultipliersContact[i];
-        let frictionForce = math.multiply(-muFriction*normalForce/Vt,VparticleTangent);
+        let eps = 1e-6;
+        let frictionForce = math.multiply(-muFriction*normalForce/(Vt+eps),VparticleTangent);
         frictionForces.set([iP,0], frictionForce[0]);
         frictionForces.set([iP,1], frictionForce[1]);
 
@@ -1255,6 +1314,31 @@ function stepUnpackStateWithContact(STATE){
 
 //lets implement the step function with contact constraints
 
+function frictionForcesTweak(frictionForces,J){
+    // we'll tweak the friction forces to be more consistent with the constraints
+    // basically we want to sustract to teh friction forces its projection on the constraints normal vectors
+    // this will prevent the friction forces from pushing the particle into the polygon
+    // we want Jf = 0, where f is the friction forces, to avoid solving the system again we'll just tweak the friction forces
+    let frictionForcesFlat = math.matrix(math.flatten(frictionForces));
+    // we iter over each row of J^{T} and substract the projection of the friction force on the normal vector
+    let nconstraints = J.size()[0];
+    let nparticles = J.size()[1]/2;
+    let frictionForcesTweaked = math.clone(frictionForcesFlat);
+    let Jarray = J.toArray();
+    for (let i = 0; i < nconstraints; i++){
+        let Jt_i = Jarray[i];
+
+        let normJt_i = math.norm(Jt_i);
+        let projection = math.dot(Jt_i, frictionForcesFlat)/normJt_i;
+        frictionForcesTweaked = math.subtract(frictionForcesTweaked, math.multiply(projection,Jt_i));
+
+    }
+
+    return frictionForcesTweaked.reshape([nparticles,2]);
+}
+
+
+
 function stepSemiEulerContact(STATE, PARAMETERS){
     // things we have to do here:
     // 1. Unpack the state object
@@ -1281,6 +1365,7 @@ function stepSemiEulerContact(STATE, PARAMETERS){
     let lagrangeMultipliersContact = indicesConstraintsContact.map(i => outSolverConstraints.lagrange_multipliers[i]);
 
     let frictionForces = calculateFrictionForces(lagrangeMultipliersContact, s.vs, s.collisions, polygonsObjs, PARAMETERS.muFriction);
+   // frictionForces = frictionForcesTweak(frictionForces,J).toArray();
     let constraintForces = outSolverConstraints.constraintForces;
     let contactForces = outSolverConstraints.contact_forces;
     let totalForces = math.add(math.add(externalForces,constraintForces), frictionForces).toArray();
@@ -1359,6 +1444,47 @@ TESTCASES
 // the analytical solution function should be a function of x0, v0, t 
 // we'll start with a Pendulum and a Dumbell
 
+
+
+
+function calculateConstraintForcesFromTrajectory(vsArray, masses, externalForces,tArray){
+    //utility to numerically calculate constraint forces from the trajectory velocities calculated by the solver or the analytical solution
+    // constraint_forces are nothing but Mx''-externalForces = constraint_forces, with M the mass matrix, a diagonal matrix in our case
+    //varray is a [tsteps, nparticles, 2] array with the velocities masses [nparticles] externalForces [tsteps,nparticles,2]
+    //we assume fixed size dt
+    let shapesEqual = isShapeEqual(vsArray, externalForces);
+    if (!shapesEqual){
+        throw new Error("The shapes of vArray and externalForces should be equal")
+    }
+    
+    let h = tArray[1]-tArray[0];
+
+    let accArray = [];
+    for (let i = 0; i < vsArray.length-1; i++){
+        let acc = vsArray[i+1].map((v,j) => [(v[0]-vsArray[i][j][0])/h, (v[1]-vsArray[i][j][1])/h]);
+        accArray.push(acc);
+    }
+
+    accArray.push(accArray[accArray.length-1]);
+
+
+    let constraintForces = [];
+    for (let i = 0; i < tArray.length; i++){
+        let acc = accArray[i];
+        let externalForce = externalForces[i];
+        let constraintForce = acc.map((a,j) => [masses[j]*a[0]-externalForce[j][0], masses[j]*a[1]-externalForce[j][1]]);
+        constraintForces.push(constraintForce);
+    }
+
+    return constraintForces;
+
+}
+
+
+
+
+
+
 function pendulumSystemConfig(thetaO, omegaO, g, L, mass){
 
     let x0 = [[L*Math.sin(thetaO), -L*Math.cos(thetaO)]]; // [nparticles,2] [1,2] ( 1 particle)
@@ -1377,6 +1503,7 @@ function pendulumSystemConfig(thetaO, omegaO, g, L, mass){
         collisions: [],
         gravity: gravity,
         time: time,
+        polygons: [],
         }
 
     
@@ -1472,10 +1599,337 @@ function chainSystemConfig(nparticles, g, L, mass, angle){
 }
 
 
+// With contact systems
+
+function particleOnStairs(widthStep =0.3, heightStep = 0.05,vx = 0.1,nsteps =3, gravity = 0.1, mass = 1){
+    //a simple scenario to test contact constraints and resolution
+    //n steps, the particle initiall rests on the higher one, but moving
+    //with a given tangential velocity, it must move with constant velocity
+    // until it reaches the end of the step, for per4flectly inelastic collisions
+    //it must lost all the normal velocity and keep the tangential velocity
+
+    //for the stairs we just create rectangles polygons widthStep , heighStep
+    //and we shift them widthstep, heightstep
+    // the particle will be at the center of the first step
+
+    let polygons = [];
+    let heightPol = 0.1;
+    for (let i = 0; i < nsteps; i++){
+        let tLC = [i*widthStep,- i*heightStep];//top left corner
+        let polygon = [tLC, [tLC[0]+widthStep, tLC[1]],
+                     [tLC[0]+widthStep, tLC[1]-heightStep], [tLC[0], tLC[1]-heightStep] ];
+
+        polygons.push(polygon);
+    }
+
+    let x0 = [[widthStep/2, 0]];
+    
+    let initialState = {
+        xs: x0,
+        vs: [[vx,0]],
+        masses: [mass],
+        constraints_distance: [],
+        constraints_pin: [],
+        collisions: [],
+        gravity: [gravity, [0,-1]],
+        time: 0,
+        polygons: polygons,
+        }
+
+    return initialState;
+
+
+}
+
+function dumbellSlidingOnWallSystemConfig(L,mass1,mass2,angle, g){
+    //simple test for contact constraints, without friction
+    // a dumbell system, two masses with a distance constraint, mass1 is on the ground
+    //mass2 is on the wall, angle is the initial angle of the dumbell with the horizontal
+    //the system will slide down the wall with an effective 1 degree of freedom (the angle)
+    //we must create two polygons, one for the ground and one for the wall
+    // and we place mass1 at L(cos angle,0) and mass2 at L(0, sin angle)
+
+    // we build polygons clock-wisely so the edges and normals are correctly computed
+
+    let polWall = [[0,-3],[-1,-3],[-1,3],[0,3]];
+    let polGround = [[-3,0],[3,0],[3,-1],[-3,-1]];
+    angle = angle*Math.PI/180;
+    let x1 = [L*Math.cos(angle),0];
+    let x2 = [0,L*Math.sin(angle)];
+    let x0 = [x1,x2];
+    let v0 = [[0,0],[0,0]];
+    let masses = [mass1,mass2];
+
+    let initialState = {
+        xs: x0,
+        vs: v0,
+        masses: masses,
+        constraints_distance: [[0,1,L]],
+        constraints_pin: [],
+        collisions: [],
+        gravity: [g,[0,-1]],
+        time: 0,
+        polygons: [polGround,polWall],
+        }
+
+
+
+    return initialState;
+}
+
+function dumbellSlidingOnWallAnalyticalSolution(L, mass, angle, g, tArray){
+    // we'll integrate the angle evolution equation for the simplified assumption of equal masses
+    //Lagrangian = T-V. T = 1/2 m1 v1^2 + 1/2 m2 v2^2   and V = mgx2 = mgLsin(theta)
+    //v1 = d_t(Lcos(angle)) = -Lsin(angle)theta_dot v2 = d_t(Lsin(angle)) = Lcos(angle)theta_dot
+    //T = 1/2 m1 L^2 sin^2(theta) theta_dot^2 + 1/2 m2 L^2 cos^2(theta) theta_dot^2 = mL^{2}theta_dot^2/2
+    //V = mgLsin(theta)
+    //L = mL^{2}theta_dot^2 - mgLsin(theta), eofm d_t(partial_L/partial_theta_dot) - partial_L/partial_theta = 0
+    //2mL^{2}theta_dot theta_ddot + mgLcos(theta) = 0
+    //theta_ddot = -g/(2L)cos(theta)
+
+    let theta0 = angle*Math.PI/180;
+
+    let dxdtFun = (x,t) => {
+        let [theta,theta_dot] = x;
+        let dthetadt = theta_dot;
+        let dtheta_dotdt = (-g/(L))*Math.cos(theta);
+        return [dthetadt,dtheta_dotdt];
+    
+    }
+
+    let x0 = [theta0,0];
+    let out = integrateOdeOnTarray(dxdtFun, x0, tArray,"Euler")//out [tarray.length,2] 
+    let thetaArray = out.map(x => x[0]);
+    let theta_dotArray = out.map(x => x[1]);
+
+    let xsArray = thetaArray.map((theta,i) => [ [L*Math.cos(theta),0], [0,L*Math.sin(theta)] ]);
+    let vsArray = theta_dotArray.map((theta_dot,i) => [ [-L*Math.sin(thetaArray[i])*theta_dot,0], [0,L*Math.cos(thetaArray[i])*theta_dot] ]);
+    let externalForces = tArray.map(t => [ [0,-mass*g],[0,-mass*g] ]);
+    let constraintForces = calculateConstraintForcesFromTrajectory(vsArray, [mass,mass], externalForces, tArray);
+
+    let stateStory = [];
+
+    for (let i = 0; i < tArray.length; i++){
+        let state = {
+            "xs": xsArray[i],
+            "vs": vsArray[i],
+            "time": tArray[i],
+            "constraint_forces": constraintForces[i],
+            "external_forces": externalForces[i],
+            "gravity": [g,[0,-1]],
+            "constraints_distance": [[0,1,L]],
+            "polygons": [[[-3,0],[3,0],[3,-1],[-3,-1]],[[0,-3],[-1,-3],[-1,3],[0,3]]],
+            "masses": [mass,mass],
+
+        }
+        stateStory.push(state);
+    }
+
+    return stateStory;
+    
+}
+
         
+function tumblingBoxSystemConfig(side, g, Lwedge, angle){
+    //here we aim to simulate the tumbling box along a wedge
+    let origin = [0,0];
+    let xs = [[origin[0],origin[1]],
+              [origin[0],origin[1]+side],
+                [origin[0]+side,origin[1]+side],
+                [origin[0]+side,origin[1]]];
+
+    let neighs = getNeighborsDelauney(xs);//loaded from math_utils.js
+
+    let visitedPairs = new Set();
+    let constraints_distance = [];
+    for (let particle_idx in neighs){
+        let neighbors = neighs[particle_idx];
+        for (let i = 0; i < neighbors.length; i++){
+            let particle_idx2 = neighbors[i];
+            let pair = [particle_idx, particle_idx2];
+            pair.sort();
+            let pairStr = pair.join(",");
+            if (!visitedPairs.has(pairStr)){
+                visitedPairs.add(pairStr);
+                //particle_idx and particle_idx2 to Integer
+                particle_idx = parseInt(particle_idx);
+                particle_idx2 = parseInt(particle_idx2);
+                let distance = math.distance(xs[particle_idx], xs[particle_idx2]);
+                constraints_distance.push([particle_idx, particle_idx2, distance]);
+            }
+        }
+    }
+    
+    
+
+    let base = Lwedge;
+    //angle in deg
+    let height = base*Math.tan(angle*Math.PI/180);
+    let wedge = [[0,0],[0,height],[base,0]];
+    //now, lets place the box on the wedge, we'll place the pivot box vertex at intersection of the 90º angle of the wedge bisector and the wedge slope
+    // for this we start by shifting the box by [-side,0] to the left so the pivot is at [0,0], we then rotate the box around the pivot by angle
+    //and finally we shift the box by the vector slope_midpoint+origin. 
+    //we'll use translate and rotate functions from math_utils.js
+    xs = translate(xs, [-side,0]);
+    xs = rotate(xs,angle,[0,0]);
+    //midpoint [0,height]+[base/2,height]/2
+    let slopeMidpoint = [base/2,height-height/2];
+
+    xs = translate(xs, slopeMidpoint);
+
+    let STATE = {
+        neighbors: neighs,
+        xs: xs,
+        constraints_distance: constraints_distance,
+        constraints_pin: [],
+        "constraints_values": [],
+        "constraints_mae": 0,
+        "targets": [],
+        "masses": [1,1,1,1],
+        "vs": [[0,0],[0,0],[0,0],[0,0]],
+        "collisions": [],
+        "polygons": [],
+        "J": null,
+        "dotJ": null,
+        "t":0,
+        "gravity": [g,[0,-1]],
+        "polygons": [wedge], 
+        "springs2points": []
 
 
-function integrateSystem(STATE,PARAMETERS, nsteps){    
+    };
+
+    //lets translate box and wedge a little to the left and down
+    STATE.xs = translate(STATE.xs, [-1.5,-1]);
+    STATE.polygons[0] = translate(STATE.polygons[0], [-1.5,-1]);
+    return STATE;
+}
+
+
+function tumblingBoxAnalyticalSolution(side, g, angle, tarray){
+    //Here we integrate the angle coordinate evolution
+    //we'll focus on the rotation around the pivot point without considering pivot swaps on 
+    //following steps. Angle will be positive for clockwise rotation
+    //and theta0 = wedge_angle
+    //The pivot point will be the 3 vertex of the box (0-indexed) to be
+    //consistent with the box configuration we defined in tumblingBoxSystemConfig
+    // the equation will be I*theta'' = sum_i torque_i = sum_i r_i x (-m_i*g) = -m*g*sum_i L_i*sin(theta_i)
+    // for the 0 and 2 masses L_i = side, the 1 masses is sqrt(2)*side (diagonal to the pivot)
+    // angles for the [0,1,2] masses are [theta, theta+pi/4, theta+pi/2]
+    // so I*theta'' = -m*g*(L*sin(theta)+L*sqrt(2)*sin(theta+pi/4)+L*sin(theta+pi/2))
+    let origin = [0,0];
+    let xs = [[origin[0],origin[1]],
+            [origin[0],origin[1]+side],
+                [origin[0]+side,origin[1]+side],
+                [origin[0]+side,origin[1]]];
+
+
+    let masses = [1,1,1,1];
+    let pivot = xs[3];
+    let inertiaMoment = calculateInertiaMoment( xs, masses, pivot);
+    let theta0 = angle*Math.PI/180;
+
+    //lets write the differential equation as a 2 dimensional first order system
+    // so we can use integrateOde(fun, x0, tf, h, method="RK4", tArrayEval = null) from math_utils.js
+    //where fun is dxdt(x,t)->[dx1dt,dx2dt] and x0 is [x0_1,x0_2]  
+    let dxdt = (x,t) => {
+        let theta = x[0];
+        let omega = x[1];
+        let L = side;
+        let [theta1, theta2, theta3] = [theta, theta-Math.PI/4, theta-Math.PI/2];
+        let torque = g*L*(Math.sin(theta1)+Math.sqrt(2)*Math.sin(theta2)+Math.sin(theta3));
+        let dotTheta = omega;
+        let dotOmega = torque/inertiaMoment;
+        return [dotTheta, dotOmega];
+    }
+
+    let x0 = [theta0, 0];
+    let tf = tarray[tarray.length-1];
+    let h = tarray[1]-tarray[0];
+    let method = "RK4";
+    let tArrayEval = tarray;
+    let out = integrateOde(dxdt, x0, tf, h, method, tArrayEval);
+    let thetas = out.map(x => x[0]);
+    let omegas = out.map(x => x[1]);
+    // lets transform thetas and omegas to xs and vs
+
+    let xsArray = [];
+    let vsArray = [];
+    for (let i = 0; i < thetas.length; i++){
+        let theta = thetas[i];
+        let omega = omegas[i];
+        let x = rotate(xs, theta, pivot,"rad");
+        //lets get the relative vectors to the pivot (vertex 3)
+        let r30 = math.subtract(x[0],pivot);
+        let r31 = math.subtract(x[1],pivot);
+        let r32 = math.subtract(x[2],pivot);
+        //pivot has [0,0] velocity
+        let v0 = [r30[1]*omega, -r30[0]*omega];
+        let v1 = [r31[1]*omega, -r31[0]*omega];
+        let v2 = [r32[1]*omega, -r32[0]*omega];
+        let v3 = [0,0];
+        let vs = [v0,v1,v2,v3];
+
+
+        xsArray.push(x);
+        vsArray.push(vs);
+    }
+
+    //lets calculate the constraint forces
+    // basically mx'' = external_forces + constraint_forces
+    // so constraint_forces = mx'' - external_forces = mx'' - m*g
+    //lets calculate the acceleration numerically acc_t = (v_{t+1}-v_t)/h
+    //for the last value we just copy the previous one
+    //vsArray is a [tarray.length,4,2] array
+    // we have to build a [tarray.length,4,2] array with acceleration values
+
+    let externalForces = [];
+    for (let i = 0; i < tarray.length; i++){
+        let f1 = [0,-masses[0]*g];
+        let f2 = [0,-masses[1]*g];
+        let f3 = [0,-masses[2]*g];
+        let f4 = [0,-masses[3]*g];
+
+        externalForces.push([f1,f2,f3,f4]);
+    }
+    let constraintForces = calculateConstraintForcesFromTrajectory(vsArray, masses, externalForces,tArrayEval)
+    //lets assert constraintForces are of the same shape as vsArray
+    if (constraintForces.length !== vsArray.length){
+        throw new Error("constraintForces and vsArray should have the same length")
+    }
+ 
+
+
+
+
+    //now lets create a stateStory array of state objects that mimic the solver output
+    let stateStory = [];
+    for (let i = 0; i < tarray.length; i++){
+        let state = {
+            "xs": xsArray[i],
+            "vs": vsArray[i],
+            "time": tarray[i],
+            "constraint_forces": constraintForces[i],
+            "external_forces": externalForces[i],
+            "masses": masses,
+            "constraints_distance": [[0,1,side],[1,2,side],[2,3,side],[3,0,side],[1,3,Math.sqrt(2)*side]],
+            "constraints_pin": [],
+            "collisions": [],
+            "gravity": [g, [0,-1]],
+            "polygons": [],
+            "J": null,
+            "dotJ": null,
+            "inertiaMoment": inertiaMoment,//for debugging purposes
+        }
+        stateStory.push(state);
+    }
+
+    return stateStory;
+
+
+}
+
+function integrateSystemNonContact(STATE,PARAMETERS, nsteps){    
     let s = STATE;
 
     let STATE_STORY = [s];
@@ -1492,6 +1946,22 @@ function integrateSystem(STATE,PARAMETERS, nsteps){
 
 
 
+}
+
+function integrateSystem(STATE,PARAMETERS, nsteps){
+    let s = STATE;
+
+    let STATE_STORY = [s];
+
+    for (let i = 0; i < nsteps; i++){
+        //lets copy the state object, just in case
+        let state = JSON.parse(JSON.stringify(s));
+        let newState = stepSemiEulerContact(state,PARAMETERS);
+        STATE_STORY.push(newState);
+        s = newState;
+    }
+
+    return STATE_STORY;
 }
 
 
@@ -1526,7 +1996,9 @@ function solveReferenceSystems(nameSystem,PARAMETERS,nsteps){
 
 export { stepTestSemiEuler,stepSemiEulerContact, calculateCOM, calculateKineticEnergy,
         stepSemiEulerNonContact, solveReferenceSystems, pendulumSystemConfig, pendulumAnalyticalSolution,
-        doublePendulumSystemConfig, integrateSystem, initState, chainSystemConfig,
+        doublePendulumSystemConfig, integrateSystem, particleOnStairs,
+         initState, chainSystemConfig,  tumblingBoxSystemConfig,tumblingBoxAnalyticalSolution,
+            dumbellSlidingOnWallSystemConfig, dumbellSlidingOnWallAnalyticalSolution,
         computeJacobians, solveConstraints, stepUnpackStateWithContact,
          collisions2ContactConstraints,computeExternalForces, calculateConstraintForces,
          CollisionHandler, ConstraintContact, Polygon

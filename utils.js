@@ -77,15 +77,7 @@ function sliceMatrix(matrix, slices) {
 function capDecimalsArray(array, decimals = 3) {
 
 	
-    if (!Array.isArray(array)) {
-      throw new Error("Input is not an array");
-    };
-    let dimensions = getArrayDimensions(array);
-    
-    if ((dimensions.length!= 1) && (dimensions.length!=2)){
-      throw new Error(`Only 1 or 2 dimensions not ${dimensions}`);
-    };
-    
+
   
     if (Array.isArray(array[0])) { // if array is 2D
       return array.map(function(subArray) {
@@ -103,14 +95,7 @@ function capDecimalsArray(array, decimals = 3) {
     }
   }
   
-  function getArrayDimensions(array) {
-    let dimensions = [];
-    while (Array.isArray(array)) {
-      dimensions.push(array.length);
-      array = array[0];
-    }
-    return dimensions;
-  }
+
 
 
   function displayObjectInDiv(obj, div_output_id, id_prefix = ""){
@@ -190,4 +175,4 @@ function displayMouseCoords(svg,  canvas2ModelCallback = null,div_output_id = nu
 
 
 export { sliceMatrix, prettyPrintState, displayStateText, capDecimalsArray,
-       getArrayDimensions, displayObjectInDiv, getSvgRelativeCoords, displayMouseCoords};
+        displayObjectInDiv, getSvgRelativeCoords, displayMouseCoords};
