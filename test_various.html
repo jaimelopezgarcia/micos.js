@@ -45,9 +45,9 @@
     <script type="module">
         import {getNeighborsDelauney} from './math_utils.js';
         import {computeJacobians,
-              stepUnpackStateWithContact, Polygon,
+              stepUnpackState, Polygon,
                CollisionHandler, solveConstraints, computeExternalForces,
-               calculateConstraintForces , stepSemiEulerContact} from "./solver.js";
+               calculateConstraintForces , stepSemiEuler} from "./solver.js";
         import {drawCircles, drawLines, drawArrow,
              drawPolygon, drawParticles,PolygonDrawer, CollisionDrawer,Drawer} from "./drawing.js";
         import {model2Canvas, canvas2Model,translate, scale} from "./math_utils.js";
@@ -225,7 +225,7 @@
     }
 
         function getJacobiansConstraints(STATE){
-            let [constraintsObjs, _1, _2] = stepUnpackStateWithContact(STATE);
+            let [constraintsObjs, _1, _2] = stepUnpackState(STATE);
             //All the constraints have the following methods
             //getConstraintValue(xs) -> returns the value of the constraint
             //getParticleIndices() -> returns the indices of the particles involved in the constraint
@@ -274,7 +274,7 @@
         let mainCallback = () => {
            
            
-            let newSTATE = stepSemiEulerContact(STATE,PARAMETERS);
+            let newSTATE = stepSemiEuler(STATE,PARAMETERS);
             for (let key in newSTATE){
                 updateState(key,newSTATE[key],STATE);
             }

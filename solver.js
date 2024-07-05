@@ -1,6 +1,6 @@
-import { ConstraintDistance, ConstraintPin } from "./constraints.js";
-import { translate, rotate, getNeighborsDelauney, calculateInertiaMoment,
-    integrateOde, integrateOdeOnTarray, isShapeEqual} from "./math_utils.js";
+import { ConstraintDistance, ConstraintPin, ConstraintContact } from "./constraints.js";
+import { translate, rotate,rotateCOM, getNeighborsDelauney, calculateInertiaMoment,
+    integrateOde, integrateOdeOnTarray, isShapeEqual, calculateCOM, calculateKineticEnergy} from "./math_utils.js";
 //IntegrateSystem(fun, x0, tf, h) where x0 is a R dim array, fun is a R->R dxdt fun 
 // integrateOdeOnTarray(fun,xo,tArray,method = "RK4")
 //h is the time step, tf is the final time, by default uses RK4
@@ -11,7 +11,7 @@ import { translate, rotate, getNeighborsDelauney, calculateInertiaMoment,
 const DEBUG = true;
 
 if (DEBUG){
-    console.log("solver.js loaded","PENDING TESTING SPRINGS AND DAMPING FORCES");
+    console.log("solver.js loaded","PENDING MODIFY HANDLING OF CONTACT CONSTRAINTS, NEEDED AN ADDITIONAL ITERATION AFTER CLIPPING LAGRANGE MULTIPLIERS (ACTIVE SET METHOD)");
 }
 
 
@@ -22,49 +22,6 @@ if (DEBUG){
 /*
 GENERAL FUNCTIONALITIES
 */
-//basic function to calculate COM given positions array xs [Nparticles, 2] and masses
-
-function calculateCOM(xs,masses){
-    //xs array of particle possitions
-     if (xs.length !== masses.length){
-        throw new Error("The xs and masses arrays should have the same length")
-      }
-    if (xs[0].length !== 2){
-      throw new Error("The xs array should have 2 components")
-    }
-    let total_mass = masses.reduce((a,b)=>a+b,0);
-    let weighted_xs = xs.map((x,i)=>math.multiply(masses[i]/total_mass,x));
-    let COM = weighted_xs.reduce((a,b)=>math.add(a,b),math.zeros(2));
-  
-      
-      return COM;
-    }
-
-
-
-function calculateKineticEnergy(vs,masses){
-    if (vs.length !== masses.length){
-        throw new Error("The xs and masses arrays should have the same length")
-    }
-    if (vs[0].length !== 2){
-    throw new Error("The xs array should have 2 components")
-    }
-    //Ekin = 0.5*v^{T}Mv
-    let M = math.matrix(masses.map(mass=>[mass,mass])).reshape([-1]);//vx and vy have the same mass(same particle)
-    M = math.diag(M);
-    let v_matrix = math.flatten(math.matrix(vs));
-
-    let Ekin = 0.5*math.multiply(math.transpose(v_matrix),math.multiply(M,v_matrix));
-    return Ekin;
-    }
-
-
-
-
-
-
-
-
 
 
 /*
@@ -231,387 +188,6 @@ function computeExternalForces(forces,xarray,varray,masses){
     }
     return external_forces;
   }
-
-
-
-
-
-
-
-
-
-
-/*
-SOLVE CONSTRAINTS FUNCTIONS (NON-CONTACT)
-*/
-function computeJacobiansNonContact(constraints,xarray,varray){
-    /*
-    *   Compute the jacobian matrix J and dot jacobian matrix dot_J for the constraints
-    *   J is a matrix of size [nconstraints, 2*nparticles]
-    *  dot_J is a matrix of size [nconstraints, 2*nparticles]
-    *  The constraints should be an array of constraint objects
-    */
-
-    // type checking, constraints,xarray,varray should be arrays
-    if (!Array.isArray(constraints) || !Array.isArray(xarray) || !Array.isArray(varray)){
-        throw new Error("constraints, xarray and varray should be arrays")
-    }
-    const nconstraints = constraints.length;
-    const nparticles = xarray.length;
-    const J = math.zeros(nconstraints, 2*nparticles,"sparse");
-    const dot_J = math.zeros(nconstraints, 2*nparticles,"sparse");
-
-    for (let i = 0; i < nconstraints; i++){
-        let constraint = constraints[i];
-        let constraint_particle_indices = constraint.getParticleIndices();
-        let jacobian_particles = constraint.getJacobianParticles(xarray);
-        let dot_jacobian_particles = constraint.getDotJacobianParticles(varray);
-
-        if (constraint_particle_indices.length !== jacobian_particles.length){
-        throw new Error("The number of particles in the constraint is not equal to the number of jacobian particles")
-        }
-        if (constraint_particle_indices.length !== dot_jacobian_particles.length){
-        throw new Error("The number of particles in the constraint is not equal to the number of dot jacobian particles")
-        }
-
-
-        for (let j = 0; j < constraint_particle_indices.length; j++){
-        let particle_index = constraint_particle_indices[j];
-        let jacobian_particle = jacobian_particles[j];
-        if (jacobian_particle.length !== 2){
-            throw new Error("The jacobian particle should have 2 components")
-        }
-        let jacobian_particle_x = jacobian_particle[0];
-        let jacobian_particle_y = jacobian_particle[1];
-        J.set([i, 2*particle_index], jacobian_particle_x);
-        J.set([i, 2*particle_index + 1], jacobian_particle_y);
-
-        let dot_jacobian_particle = dot_jacobian_particles[j];
-        if (dot_jacobian_particle.length !== 2){
-            throw new Error("The dot jacobian particle should have 2 components")
-        }
-        let dot_jacobian_particle_x = dot_jacobian_particle[0];
-        let dot_jacobian_particle_y = dot_jacobian_particle[1];
-        dot_J.set([i, 2*particle_index], dot_jacobian_particle_x);
-        dot_J.set([i, 2*particle_index + 1], dot_jacobian_particle_y);
-
-        
-        }
-    }
-
-    return [J, dot_J];
-    }
-
-
- //lets create the non dummy solve_constraints function
-  //With Baumgarte stabilization the differentiated constraint eq is dotJv+Ja+alpha*dotC+beta*C = 0
-  // Replacing a = M^{-1}(Fext + Fconstraint) and dotC = Jv we get dotJv + J(M^{-1}(Fext + Fconstraint)) + alpha*Jv + beta*C = 0
-//And Fconstraint = J^T*lambda, so we get dotJv + J(M^{-1}(Fext + J^T*lambda)) + alpha*Jv + beta*C = 0
-// so the resulting linear system to solve in A*lambda = b  where A = J*M^{-1}*J^T  and 
-//b = -dotJv - J*M^{-1}*Fext - alpha*Jv - beta*C
-// lets implement this
-function solveNonContactConstraints(J, dot_J, xarray, varray,
-    external_forces, masses, constraints,
-     alpha = 0.00, beta = 0.00){
-    /*
-    *  ONLY FOR NON-CONTACT CONSTRAINTS
-    */
-
-    //lets do type checking, J,dot_J external forces mathjs matrices, xarray, varray, masses arrays
-    if (!math.isMatrix(J) || !math.isMatrix(dot_J) || !math.isMatrix(external_forces)){
-    throw new Error("J, dot_J and external_forces should be mathjs matrices")
-    }
-    if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
-    throw new Error("xarray, varray and masses should be arrays")
-    }
-    let nparticles = xarray.length;
-    let nconstraints = J.size()[0];
-    let M_inv = math.matrix(masses.map(mass=>[1/mass,1/mass])).reshape([-1]);//vx and vy have the same mass(same particle)
-    M_inv = math.diag(M_inv,"sparse");
-
-    let A = math.multiply(J, math.multiply(M_inv, math.transpose(J)));
-    //lets check shape of A, it should be [nconstraints,nconstraints]
-    if (A.size()[0] !== nconstraints || A.size()[1] !== nconstraints){
-    throw new Error("The A matrix should have the same number of constraints")
-    }
-    //lets compute b = -dot_J*varray - J*M_inv*external_forces - alpha*J*varray - beta*constraints
-    //Lets do it in parts and then sum
-    //first varray [nparticles,2] to matrix and flatten-> [2*nparticles]
-    //the same for external forces [nparticles,2] to matrix and flatten-> [2*nparticles]
-    //Get constraints_vals [nconstraints] from constraints
-
-    let constraints_vals = math.matrix(
-        constraints.map(constraint => constraint.getConstraintValue(xarray))
-        );
-    let vmatrix = math.flatten(varray);
-    external_forces =math.flatten(external_forces);
-    let part1 = math.multiply(dot_J, vmatrix);
-    let part2 = math.multiply(J, math.multiply(M_inv, external_forces));
-    let part3 = math.multiply(alpha, math.multiply(J, vmatrix));
-    let part4 = math.multiply(beta, constraints_vals).reshape([nconstraints,1]);
-
-
-    let b = math.add(math.add(part1, part2), math.add(part3, part4));
-    //all parts appear with a minus sign in the equation
-    b = math.multiply(b,-1);
-    let lagrange_multipliers = math.lusolve(A,b).reshape([-1]);
-    // lets create a dict-like object to store the results
-    let out_dict = {
-    lagrange_multipliers: lagrange_multipliers,
-    constraints_vals: constraints_vals,
-    }
-    return out_dict;
-
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-TIME STEPPERS
-*/
-
-function stepTestSemiEuler(STATE, PARAMETERS){
-    /*
-    *   Provisional semi-implicit euler integration
-    */
-    let xs = STATE.xs;
-    let vs = STATE.vs;
-    let masses = STATE.masses;
-    let external_forces = STATE.external_forces;
-    let constraint_forces = STATE.constraint_forces;
-    let contact_forces = STATE.contact_forces;
-    let friction_forces = STATE.friction_forces;
-    let total_forces = xs.map((x,i) => math.add(external_forces[i], constraint_forces[i], contact_forces[i], friction_forces[i]));
-
-    let dt = PARAMETERS["dt"];
-    // gravity is assumed to be computed already in the external forces
-
-    let new_vs = vs.map((v,i) => math.add(v, math.multiply(total_forces[i], dt/masses[i])));
-    let new_xs = xs.map((x,i) => math.add(x, math.multiply(new_vs[i], dt)));
-    let new_time = STATE.time + dt;
-
-
-    let newState = {
-        "xs": new_xs,
-        "vs": new_vs,
-        "time": new_time,
-    }
-
-    // lets add the rest of properties to newState copying them from STATE, excluding ["xs", "vs","time"]
-    for (let key in STATE){
-        if (!["xs", "vs", "time"].includes(key)){
-            newState[key] = STATE[key];
-        }
-    }
-
-    return newState;
-}
-
-
-// lets write a semi-implicit euler time stepper that takes into account constraints
-// we'll skip so by now the contact forces and friction forces resolution
-
-
-function initState(STATE, PARAMETERS){
-    
-    //we need to create external_forces, constraint_forces, contact_forces, friction_forces , we'll initialize them to zeros    
-
-    if (!PARAMETERS.hasOwnProperty("alpha") || !PARAMETERS.hasOwnProperty("beta")){
-        throw new Error("PARAMETERS must have keys alpha and beta")
-    }
-
-    // lets throw an error if STATE has not the required minimum keys, xs, vs, masses
-    let mandatory = ["xs", "vs", "masses"]
-    for (let key of mandatory){
-        if (!STATE.hasOwnProperty(key)){
-            throw new Error(`The STATE object must have the key ${key}`)
-        }
-    }
-
-    let [alpha, beta] = [PARAMETERS.alpha, PARAMETERS.beta];
-    let s = STATE;
-    let nparticles = s.xs.length;
-    let [constraintsObjs, forceObjs] = stepUnpackState(s);
-    let externalForcesArray = computeExternalForces(forceObjs, s.xs, s.vs, s.masses);
-    let [J, dot_J] = computeJacobiansNonContact(constraintsObjs, s.xs, s.vs);
-    let outSolveConstraints = solveNonContactConstraints(J, dot_J, s.xs, s.vs,
-                                                            externalForcesArray, s.masses,
-                                                             constraintsObjs, alpha, beta);
-    let constraintForces= math.multiply(math.transpose(J), outSolveConstraints.lagrange_multipliers).reshape([nparticles,2]);
-    let frictionForces = math.zeros(nparticles,2);
-    let contactForces = math.zeros(nparticles,2);
-    let totalForces = math.add(externalForcesArray, constraintForces, contactForces, frictionForces);
-
-    s["external_forces"] = externalForcesArray.toArray();
-    s["constraint_forces"] = constraintForces.toArray();
-    s["contact_forces"] =   contactForces.toArray();
-    s["friction_forces"] = frictionForces.toArray();
-    s["total_forces"] = totalForces.toArray();
-    s["constraints_vals"] = outSolveConstraints.constraints_vals.toArray();
-    s["lagrange_multipliers"] = outSolveConstraints.lagrange_multipliers.toArray();
-    s["J"] = J.toArray();
-    s["dot_J"] = dot_J.toArray();
-    s["time"] = 0;
-
-    return s;
-}
-
-
-function stepUnpackState(STATE){
-    // We turn the constraint info into constraint objects
-    // additionally we turn force info into force objects
-    // I'll enumerate the field and format  of the different entries in STATE, relevant for this function
-    //constraints_distance: [[idx1, idx2, distance],...] ConstraintDistance class has signature  constructor(particle1_idx, particle2_idx, distance)
-    // constraints_pin: [[idx,pin_point, pin_distance],...] ConstraintPin class has signature constructor(particle_idx, pin_point, pin_distance)
-    // constant_forces: [[idx1, force1],...] 
-    // gravity: [g, direction] Gravity class has signature constructor(particle_indices, g, direction)
-    // by default particles_indices arreys are [0,1,2,...,Nparticles-1]
-    // damping: [[idx1, damping_coefficient],...] Damping class has signature constructor(particle_indices, damping_coefficient)
-    // springs: [[idx1,idx2, spring_constant, rest_length],...] Spring class has signature constructor(idx1,idx2, spring_constant, rest_length)
-
-    //lets throw an error if the following keys are not present
-    let mandatory = ["constraints_distance", "constraints_pin", "xs", "vs", "masses"]
-    for (let key of mandatory){
-        if (!STATE.hasOwnProperty(key)){
-            throw new Error(`The STATE object must have the key ${key}`)
-        }
-    }
-
-    let s = STATE;
-
-    let constraintsDistanceObjs = s.constraints_distance.map(c => new ConstraintDistance(c[0], c[1], c[2]));
-    let constraintsPinObjs = s.constraints_pin.map(c => new ConstraintPin(c[0], c[1], c[2]));
-    let constraintsObjs = constraintsDistanceObjs.concat(constraintsPinObjs);
-    let nparticles = s.xs.length;
-    let nparticles_array = Array.from(Array(nparticles).keys());
-    let forceObjs = [];
-    //if constant_forces/gravity/damping/springs not present, we dont add nothing to forceObjs
-    if (s.hasOwnProperty("constant_forces")){
-        forceObjs = s.constant_forces.map(f => new ConstantForce([f[0]], f[1]));
-    }
-    if (s.hasOwnProperty("gravity")){
-        forceObjs.push(new Gravity(nparticles_array, s.gravity[0], s.gravity[1]));
-    }
-    if (s.hasOwnProperty("damping")){
-        forceObjs = forceObjs.concat(s.damping.map(f => new Damping([f[0]], f[1])));
-    }
-    if (s.hasOwnProperty("springs")){
-        forceObjs = forceObjs.concat(s.springs.map(f => new Spring(f[0], f[1], f[2], f[3])));
-    }
-
-
-
-    return [constraintsObjs, forceObjs];
-
-}
-
-function stepSemiEulerNonContact(STATE, PARAMETERS){
-    // Lets throw an error if STATE and PARAMETERS doesnt have the required keys
-    // STATE must have, well on second thought, lets pack the STATE preprocessing in a function
-
-    //throw an error if alpha/beta not in PARAMETERS
-    if (!PARAMETERS.hasOwnProperty("alpha") || !PARAMETERS.hasOwnProperty("beta")){
-        throw new Error("PARAMETERS must have keys alpha and beta")
-    }
-
-    //throw an error if dt not in PARAMETERS
-    if (!PARAMETERS.hasOwnProperty("dt")){
-        throw new Error("PARAMETERS must have key dt")
-    }
-    let s = STATE;
-    let nparticles = s.xs.length;
-    let dt = PARAMETERS["dt"];
-    let [alpha, beta] = [PARAMETERS.alpha, PARAMETERS.beta];
-    let [constraintsObjs, forceObjs] = stepUnpackState(s);
-    let externalForcesArray = computeExternalForces(forceObjs, s.xs, s.vs, s.masses);
-    let [J, dot_J] = computeJacobiansNonContact(constraintsObjs, s.xs, s.vs);
-    let outSolveConstraints = solveNonContactConstraints(J, dot_J, s.xs, s.vs,
-                                                            externalForcesArray, s.masses,
-                                                             constraintsObjs, alpha, beta);
-
-    let lagrange_multipliers = outSolveConstraints.lagrange_multipliers;
-    let constraintVals = outSolveConstraints.constraints_vals;
-    let constraintForces= math.multiply(math.transpose(J), lagrange_multipliers).reshape([nparticles,2]);
-
-
-    if (constraintForces.size()[0] !== nparticles){
-        throw new Error("The constraint forces should have the same number of particles")
-      }
-
-    let totalForces= math.add(externalForcesArray, constraintForces);
-
-    
-    let accs = math.zeros(nparticles,2);// acceleration matrix
-    for (let i = 0; i < nparticles; i++){
-      let mass = s.masses[i];
-      let forceX = totalForces.get([i,0]);
-      let aX = forceX / mass;
-      let forceY = totalForces.get([i,1]);
-      let aY = forceY / mass;
-      accs.set([i,0], aX);
-      accs.set([i,1], aY);
-    }
-
-    let vMatrix = math.matrix(s.vs);
-    let xMatrix = math.matrix(s.xs);
-    let newVmatrix = math.add(vMatrix, math.multiply(accs, dt));
-    let newXarray = math.add(xMatrix, math.multiply(newVmatrix, dt));
-    let newTime = s.time + dt;
-
-    //now lets create the new state object (everything that is matrix is converted to array)
-    //The new state will have
-    //xs,vs,accs,external_forces,constraint_forces,contact_forces and friction_forces (zeros(nparticles,2) arrays)
-    //constraints_vals, lagrange_multipliers, time
-    // J, Jdot 
-    let newState = {
-        "J": J.toArray(),
-        "dot_J": dot_J.toArray(),
-        "xs": newXarray.toArray(),
-        "vs": newVmatrix.toArray(),
-        "accs": accs.toArray(),
-        "external_forces": externalForcesArray.toArray(),
-        "constraint_forces": constraintForces.toArray(),
-        "contact_forces": math.zeros(nparticles,2).toArray(),
-        "friction_forces": math.zeros(nparticles,2).toArray(),
-        "total_forces": totalForces.toArray(),//this is the sum of all forces acting on the particles
-        "constraints_vals": constraintVals.toArray(),
-        "lagrange_multipliers": lagrange_multipliers.toArray(),
-        "time": newTime,
-    }  
-
-    //for the rest of the properties ( that are not in newState) we'll copy them from the original STATE object
-
-    let keysNewState = Object.keys(newState);
-    for (let key in s){
-        if (!keysNewState.includes(key)){
-            newState[key] = s[key];
-        }
-    }
-    return newState;
-
-}
-   
-    
-
-
-
-
-
-
-
 
 
 
@@ -940,7 +516,7 @@ class Polygon{
 
 
 
-            let [_1,_2,polygonObjs] = stepUnpackStateWithContact(STATE);
+            let [_1,_2,polygonObjs] = stepUnpackState(STATE);
             let collisionsArray = STATE.collisions;
             let xs = STATE.xs;
             let collisionsMap = new Map();
@@ -970,49 +546,6 @@ class Polygon{
 
 
 
-//Lets implement the particle-polygon contact constraint,
-//This will be modularized in constraints.js but we'll implement it here for now
-// the class is intented to standarize the treatment of contact constraints as the other constraints
-
-class ConstraintContact{
-    // this class assumes that the constraint is active
-    // is the outer loop responsibility to check if the constraint is active and remove the resolved constraints
-    //so the edge won't change while the constraint is active by design
-    constructor(particle_index, edge_index, polygon){
-        this.particle_index = particle_index;
-        this.edge_index = edge_index;
-        this.polygon = polygon;
-    }
-
-    getType(){
-        return "contact";
-    }
-
-    getParticleIndices(){
-        return [this.particle_index];
-    }
-
-    getConstraintValue(xarray){
-        //C(x) = 0 if the constraint is satisfied
-        //It is basically the signed distance from the particle to the edge \vec{n}^{T}\vec{r_{ep}}
-        let point = xarray[this.particle_index];
-        let dot_n_r = this.polygon.getClosestEdgeNormalProjection(point);
-        return dot_n_r;
-
-    }
-
-    getJacobianParticles(xarray){
-        //Jacobian is the normal vector of the edge
-        let normal = this.polygon.getNormal(this.edge_index);
-        return [normal];
-    }
-
-    getDotJacobianParticles(varray){
-        //dot_Jacobian is zero (static polygon, piecewise linear)
-
-        return [[0,0]];
-    }
-}
 
 //lets implement computeJacobians function, this will be an extension of the previous computeJacobiansNonContact
 // but we'll deal with distance, pin and contact constraints
@@ -1133,7 +666,7 @@ function calculateConstraintForces(constraints, lambda_multipliers, J){
 }
 function solveConstraints(J, dot_J, xarray, varray,
     external_forces, masses, constraints,
-     alpha = 0.00, beta = 0.00){
+     alpha = 0.00, beta = 0.00, clipNegativeContact = true){
 
 
     //lets do type checking, J,dot_J external forces mathjs matrices, xarray, varray, masses arrays
@@ -1173,18 +706,26 @@ function solveConstraints(J, dot_J, xarray, varray,
     let b = math.add(math.add(part1, part2), math.add(part3, part4));
     //all parts appear with a minus sign in the equation
     b = math.multiply(b,-1);
-    //lets add for stability a small value to the diagonal of A
-    //let I = math.identity(nconstraints);
-    //A = math.add(A, math.multiply(1e-5,I));
+    //lets add for stability a small value to the diagonal of A if nconstraints > 0
+    
+    if (nconstraints > 0){
+        let eps = 1e-6;
+        let I = math.identity(nconstraints);
+        A = math.add(A, math.multiply(eps,I));
+    }
+
 
     let lagrange_multipliers = math.lusolve(A,b).reshape([-1]);
     // We have to clip the contact lagrange multipliers to be >= 0
     // lets get the indices of the contact constraints using the getType method
-    let contact_indices = constraints.map((constraint,i) => [constraint.getType(),i]).filter(c => c[0] === "contact").map(c => c[1]);
-    for (let i = 0; i < contact_indices.length; i++){
-        let index = contact_indices[i];
-        if (lagrange_multipliers.get([index]) < 0){
-            lagrange_multipliers.set([index],0);
+
+    if (clipNegativeContact){
+        let contact_indices = constraints.map((constraint,i) => [constraint.getType(),i]).filter(c => c[0] === "contact").map(c => c[1]);
+        for (let i = 0; i < contact_indices.length; i++){
+            let index = contact_indices[i];
+            if (lagrange_multipliers.get([index]) < 0){
+                lagrange_multipliers.set([index],0);
+            }
         }
     }
 
@@ -1254,7 +795,7 @@ function calculateFrictionForces(lagrangeMultipliersContact, varray, collisions,
 // Lets write a function to unpack the state object. This function in the future will replace the stepUnpackState function
 // but for now lets write an additional one to avoid breaking the code
 
-function stepUnpackStateWithContact(STATE){
+function stepUnpackState(STATE){
     // We turn the constraint info into constraint objects
     // additionally we turn force info into force objects
     // I'll enumerate the field and format  of the different entries in STATE, relevant for this function
@@ -1339,7 +880,7 @@ function frictionForcesTweak(frictionForces,J){
 
 
 
-function stepSemiEulerContact(STATE, PARAMETERS){
+function stepSemiEuler(STATE, PARAMETERS){
     // things we have to do here:
     // 1. Unpack the state object
     // 2. Compute the Jacobians 
@@ -1356,10 +897,11 @@ function stepSemiEulerContact(STATE, PARAMETERS){
         }
     }
 
-    let [constraintObjs, forceObjs, polygonsObjs] = stepUnpackStateWithContact(STATE);
+    let [constraintObjs, forceObjs, polygonsObjs] = stepUnpackState(STATE);
     let s = STATE;
     let [J,dotJ] = computeJacobians(constraintObjs, s.xs, s.vs);
     let externalForces = computeExternalForces(forceObjs, s.xs, s.vs, s.masses);
+   // let outSolverConstraints = solveConstraints(J, dotJ, s.xs, s.vs, externalForces, s.masses, constraintObjs, PARAMETERS.alpha, PARAMETERS.beta);
     let outSolverConstraints = solveConstraints(J, dotJ, s.xs, s.vs, externalForces, s.masses, constraintObjs, PARAMETERS.alpha, PARAMETERS.beta);
     let indicesConstraintsContact = constraintObjs.map((c,i) => [c.getType(),i]).filter(c => c[0] === "contact").map(c => c[1]);
     let lagrangeMultipliersContact = indicesConstraintsContact.map(i => outSolverConstraints.lagrange_multipliers[i]);
@@ -1389,6 +931,7 @@ function stepSemiEulerContact(STATE, PARAMETERS){
         "contact_forces": contactForces,
         "total_forces": totalForces,
         "lagrange_multipliers": outSolverConstraints.lagrange_multipliers,
+        "lagrange_multipliers_contact": lagrangeMultipliersContact,
         "constraints_vals": outSolverConstraints.constraints_vals,
         "J": J.toArray(),
         "dot_J": dotJ.toArray(),
@@ -1399,7 +942,137 @@ function stepSemiEulerContact(STATE, PARAMETERS){
     newState.collisions = collisionsArray;
     newState.new_collisions = newCollisionsArray;
     newState.resolved_collisions = resolvedCollisionsArray;
+    //each collision entry is [iP,jE,Pidx] where iP is the particle index, jE is the edge index and Pidx is the polygon index
 
+    //lets add to newState the state properties not included in the previous object
+    //we loop over STATE keys and if they are not present in newState we add them
+    for (let key in STATE){
+        if (!newState.hasOwnProperty(key)){
+            newState[key] = STATE[key];
+        }
+    }
+
+    return newState;
+}
+
+
+function stepSemiEulerActiveSet(STATE,PARAMETERS){
+    //There is an issue that becomes apparent when particles in contact with a polygon detach from it, I think it stems in part from the handling of the inequality constraints
+    // in the solver so far, we handle the inequality constraints by clipping the lagrange multipliers to be >= 0, the thing is, even if we prevent contact forces to be attractive
+    // the rest of the constraint forces are calculated as if the contact force were a pin constraint, so we need to to do a following interation after clipping the lagrange multipliers
+    // we need to remove the contact constraints with negative lagrange multipliers and solve the system again, repeating the process if a contact lagrange multiplier becomes negative after removing a contact constraint.
+    // This is a specific instance of the active set method.
+
+    //I'll try to describe all of this in more detail
+
+    /*
+    * We have to find the lagrange multipliers, get the most negative contact lagrange multipliers 
+    and we remove it from the active set we solve now the system again but with tne updated active set
+    What we'll do is remove that constraint and recalculate jacobians etc and solve again the reduced constraints system
+
+    */
+    
+    /*
+    * 1 Unpack the state object
+    * 2 Calculate external forces
+    * 3 Calculate constraint forces
+    *   If contact lag multipliers are<0 their respective collision and constraintObj is removed
+    *  We solve the system again and repeat the process
+    * Now, there is one thing, one removing a given contact constraint, the previous removed constraint can become active again
+    * This might be specially problematic for equilibrium states with multiple contacts for bodies that are mutually equilibrated
+    * By now we'll just remove the constraint and solve the system again, in the future we must do line search and check wether
+    * some normal negative acceleration appear for some of the constraints that were previously removed
+
+    */
+    let mandatoryParameters = ["collisionThreshold", "muFriction", "alpha", "beta"];
+    for (let key of mandatoryParameters){
+        if (!PARAMETERS.hasOwnProperty(key)){
+            throw new Error(`The PARAMETERS object must have the key ${key}`)
+        }
+    }
+    let s = STATE;
+
+    //lets save the original collisions
+    let originalCollisions = JSON.parse(JSON.stringify(STATE.collisions));
+    let [constraintObjs, forceObjs, polygonsObjs] = stepUnpackState(STATE);
+    let externalForces = computeExternalForces(forceObjs, s.xs, s.vs, s.masses);
+
+    //collisions are an array of [iP,jE,Pidx] where iP is the particle index, jE is the edge index and Pidx is the polygon index
+
+    function solveConstraintsAndFindInactive( STATE, PARAMETERS, externalForces){
+        let [constraintObjs, forceObjs, polygonsObjs] = stepUnpackState(STATE);
+    
+        let s = STATE;
+        //collisions are an array of [iP,jE,Pidx] where iP is the particle index, jE is the edge index and Pidx is the polygon index
+        let [J,dotJ] = computeJacobians(constraintObjs, s.xs, s.vs);
+        let outSolverConstraints = solveConstraints(J, dotJ, s.xs, s.vs, externalForces,
+             s.masses, constraintObjs, PARAMETERS.alpha, PARAMETERS.beta, false);
+        let indicesConstraintsContact = constraintObjs.map((c,i) => [c.getType(),i]).filter(c => c[0] === "contact").map(c => c[1]);
+        let lagrangeMultipliersContact = indicesConstraintsContact.map(i => outSolverConstraints.lagrange_multipliers[i]);
+        let indicesNegative = lagrangeMultipliersContact.map((l,i) => [l,i]).filter(l => l[0] < 0).map(l => l[1]);
+        //lets print the lagrange multipliers, and the indicesNegative
+        console.log("Lagrange multipliers contact", lagrangeMultipliersContact);
+        console.log("Indices negative", indicesNegative);
+
+        return [outSolverConstraints, indicesNegative, J, dotJ];
+    }
+
+    let whileCondition = true;
+    let [outSolverConstraints, indicesNegative,J,dotJ] = [null,[],null,null];
+    while (whileCondition){
+        [outSolverConstraints, indicesNegative,J,dotJ] = solveConstraintsAndFindInactive(STATE, PARAMETERS, externalForces);
+        if (indicesNegative.length === 0){
+            whileCondition = false;
+        }else{
+            // we just update the state by removing the collision with the most negative lagrange multiplier
+            let activeCollisions = s.collisions.filter((c,i) => !indicesNegative.includes(i));
+            console.log(`Removing collision ${indicesNegative[0]} with lagrange multiplier ${outSolverConstraints.lagrange_multipliers[indicesNegative[0]]}`);
+            STATE.collisions = activeCollisions;
+        }
+    }
+
+    [constraintObjs, forceObjs, polygonsObjs] = stepUnpackState(STATE);
+    let indicesConstraintsContact = constraintObjs.map((c,i) => [c.getType(),i]).filter(c => c[0] === "contact").map(c => c[1]);
+    let lagrangeMultipliersContact = indicesConstraintsContact.map(i => outSolverConstraints.lagrange_multipliers[i]);
+
+    let frictionForces = calculateFrictionForces(lagrangeMultipliersContact, s.vs, s.collisions, polygonsObjs, PARAMETERS.muFriction);
+   // frictionForces = frictionForcesTweak(frictionForces,J).toArray();
+    let constraintForces = outSolverConstraints.constraintForces;
+    let contactForces = outSolverConstraints.contact_forces;
+    let totalForces = math.add(math.add(externalForces,constraintForces), frictionForces).toArray();
+    let acc  = totalForces.map((f,i) => [f[0]/s.masses[i], f[1]/s.masses[i]]);
+
+
+    let dt = PARAMETERS.dt;
+    let newVs = math.add(s.vs, math.multiply(dt,acc));
+    let newxs = math.add(s.xs, math.multiply(dt,newVs));
+
+    let colHandler = new CollisionHandler();
+
+    //newState with the values updated in the step
+    let newState = {
+        "xs": newxs,
+        "vs": newVs,
+        "time": s.time + dt,
+        "friction_forces": frictionForces,
+        "external_forces": externalForces.toArray(),
+        "constraint_forces": constraintForces,
+        "contact_forces": contactForces,
+        "total_forces": totalForces,
+        "lagrange_multipliers": outSolverConstraints.lagrange_multipliers,
+        "lagrange_multipliers_contact": lagrangeMultipliersContact,
+        "constraints_vals": outSolverConstraints.constraints_vals,
+        "collisions": STATE.collisions,
+        "J": J.toArray(),
+        "dot_J": dotJ.toArray(),
+
+    }
+    let [collisionsArray, newCollisionsArray, resolvedCollisionsArray] = colHandler.updateCollisions(STATE, PARAMETERS.collisionThreshold);
+    
+    newState.collisions = collisionsArray;
+    newState.new_collisions = newCollisionsArray;
+    newState.resolved_collisions = resolvedCollisionsArray;
+    //each collision entry is [iP,jE,Pidx] where iP is the particle index, jE is the edge index and Pidx is the polygon index
 
     //lets add to newState the state properties not included in the previous object
     //we loop over STATE keys and if they are not present in newState we add them
@@ -1414,19 +1087,82 @@ function stepSemiEulerContact(STATE, PARAMETERS){
 
 
 
+function initState(STATE, PARAMETERS){
+    
+    //we need to create external_forces, constraint_forces, contact_forces, friction_forces , we'll initialize them to zeros    
+
+    if (!PARAMETERS.hasOwnProperty("alpha") || !PARAMETERS.hasOwnProperty("beta")){
+        throw new Error("PARAMETERS must have keys alpha and beta")
+    }
+
+    // lets throw an error if STATE has not the required minimum keys, xs, vs, masses
+    let mandatory = ["xs", "vs", "masses"]
+    for (let key of mandatory){
+        if (!STATE.hasOwnProperty(key)){
+            throw new Error(`The STATE object must have the key ${key}`)
+        }
+    }
+
+    let [alpha, beta] = [PARAMETERS.alpha, PARAMETERS.beta];
+    let s = STATE;
+    let nparticles = s.xs.length;
+    let [constraintsObjs, forceObjs] = stepUnpackState(s);
+    let externalForcesArray = computeExternalForces(forceObjs, s.xs, s.vs, s.masses);
+    let [J, dot_J] = computeJacobians(constraintsObjs, s.xs, s.vs);
+    let outSolveConstraints = solveConstraints(J, dot_J, s.xs, s.vs,
+                                                            externalForcesArray, s.masses,
+                                                             constraintsObjs, alpha, beta);
+    let constraintForces= math.multiply(math.transpose(J), outSolveConstraints.lagrange_multipliers).reshape([nparticles,2]);
+    let frictionForces = math.zeros(nparticles,2);
+    let contactForces = math.zeros(nparticles,2);
+    let totalForces = math.add(externalForcesArray, constraintForces, contactForces, frictionForces);
+
+    s["external_forces"] = externalForcesArray.toArray();
+    s["constraint_forces"] = constraintForces.toArray();
+    s["contact_forces"] =   contactForces.toArray();
+    s["friction_forces"] = frictionForces.toArray();
+    s["total_forces"] = totalForces.toArray();
+    s["constraints_vals"] = outSolveConstraints.constraints_vals;
+    s["lagrange_multipliers"] = outSolveConstraints.lagrange_multipliers;
+    s["J"] = J.toArray();
+    s["dot_J"] = dot_J.toArray();
+    s["time"] = 0;
+
+    return s;
 
 
 
+    }
 
 
+function getConstraintsRigid(xs){
+    //The distance constraints that make the system a rigid body, from delauney triangulation
+    let neighs = getNeighborsDelauney(xs);//loaded from math_utils.js
 
+    let visitedPairs = new Set();
+    let constraints_distance = [];
+    for (let particle_idx in neighs){
+        let neighbors = neighs[particle_idx];
+        for (let i = 0; i < neighbors.length; i++){
+            let particle_idx2 = neighbors[i];
+            let pair = [particle_idx, particle_idx2];
+            pair.sort();
+            let pairStr = pair.join(",");
+            if (!visitedPairs.has(pairStr)){
+                visitedPairs.add(pairStr);
+                //particle_idx and particle_idx2 to Integer
+                particle_idx = parseInt(particle_idx);
+                particle_idx2 = parseInt(particle_idx2);
+                let distance = math.distance(xs[particle_idx], xs[particle_idx2]);
+                constraints_distance.push([particle_idx, particle_idx2, distance]);
+            }
+        }
 
+    }
 
+    return constraints_distance;
 
-
-
-
-
+}
 
 
 
@@ -1738,27 +1474,7 @@ function tumblingBoxSystemConfig(side, g, Lwedge, angle){
                 [origin[0]+side,origin[1]+side],
                 [origin[0]+side,origin[1]]];
 
-    let neighs = getNeighborsDelauney(xs);//loaded from math_utils.js
-
-    let visitedPairs = new Set();
-    let constraints_distance = [];
-    for (let particle_idx in neighs){
-        let neighbors = neighs[particle_idx];
-        for (let i = 0; i < neighbors.length; i++){
-            let particle_idx2 = neighbors[i];
-            let pair = [particle_idx, particle_idx2];
-            pair.sort();
-            let pairStr = pair.join(",");
-            if (!visitedPairs.has(pairStr)){
-                visitedPairs.add(pairStr);
-                //particle_idx and particle_idx2 to Integer
-                particle_idx = parseInt(particle_idx);
-                particle_idx2 = parseInt(particle_idx2);
-                let distance = math.distance(xs[particle_idx], xs[particle_idx2]);
-                constraints_distance.push([particle_idx, particle_idx2, distance]);
-            }
-        }
-    }
+    let constraints_distance = getConstraintsRigid(xs)
     
     
 
@@ -1778,7 +1494,6 @@ function tumblingBoxSystemConfig(side, g, Lwedge, angle){
     xs = translate(xs, slopeMidpoint);
 
     let STATE = {
-        neighbors: neighs,
         xs: xs,
         constraints_distance: constraints_distance,
         constraints_pin: [],
@@ -1929,7 +1644,147 @@ function tumblingBoxAnalyticalSolution(side, g, angle, tarray){
 
 }
 
-function integrateSystemNonContact(STATE,PARAMETERS, nsteps){    
+
+function rollingCircleSystemConfig(nparticles, radius,g, omega,mass = 1){
+    //simple recreation of a rolling circle out of particles
+    //to build the needed constraints so the circle is a rigid body we need to get neighs from delauney triangulation
+
+    //lets create a xs with the n particles, we set the origin at (0,radius) and we place the particles in a circle in clockwise order
+    
+    //now for the vs we need to calculate the velocity of the center of mass and the angular velocity
+    // rolling condition is v_cm = omega x r
+    //velocity of a particle on the circle is v_cm+ omega x r_particle
+    //rolling to the right, clockwise rotation means omega is negative so vparticle = omegaR \vec{e_{x}} -|omega|R\vec{\theta}
+    //\vec{\theta} = (-sin(theta),cos(theta))  
+
+
+    let xs = [];
+    let vs = [];
+    let origin = [0,radius];
+    let angle = 2*Math.PI/nparticles;
+    let vCom = [radius*omega,0];
+    for (let i = 0; i < nparticles; i++){
+        let anglei = i*angle
+        let x = [radius*Math.cos(anglei), radius*Math.sin(anglei)];
+        xs.push(x);
+        let vang = [omega*x[1], -omega*x[0]];
+        let vparticle = math.add(vCom,vang);
+        vs.push(vparticle);
+    }
+
+    xs = translate(xs, origin);
+
+    let constraints_distance = getConstraintsRigid(xs); //rigidification baby
+
+    let masses = Array(nparticles).fill(mass);
+
+    let polGround = [[-3,0],[3,0],[3,-1],[-3,-1]];
+
+    let initialState = {
+        xs: xs,
+        vs: vs,
+        masses: masses,
+        constraints_distance: constraints_distance,
+        constraints_pin: [],
+        collisions: [],
+        gravity: [g, [0,-1]],
+        time: 0,
+        polygons: [polGround],
+        }
+
+    return initialState;
+    }
+
+function rollingCircleAnalyticalSolution(nparticles, radius, g, omega, tArray){
+    // cicloid equation rparticle(t) = vcm*t+ rparticle(0)*(cos(omega*t),sin(omega*t))
+    // vparticle(t) = vcm + omega x rparticle(t) = vcm + omega x rparticle(0)*(cos(omega*t),sin(omega*t)) = omegaR \vec{e_{x}} -|omega|R\vec{\theta}
+
+
+
+    let origin = [0,radius];
+    let stateStory = [];
+    //lets create the initial state
+    let xs = [];
+    let vs = [];
+    let angle = 2*Math.PI/nparticles;
+    let vCom = [radius*omega,0];
+    for (let i = 0; i < nparticles; i++){
+        let anglei = i*angle
+        let x = [radius*Math.cos(anglei), radius*Math.sin(anglei)];
+        xs.push(x);
+        let vang = [omega*x[1], -omega*x[0]];
+        let vparticle = math.add(vCom,vang);
+        vs.push(vparticle);
+    }
+
+    xs = translate(xs, origin);
+
+    let masses = Array(nparticles).fill(1);
+
+    let constraints_distance = getConstraintsRigid(xs); //rigidification baby
+
+    let polGround = [[-3,0],[3,0],[3,-1],[-3,-1]];
+
+    let initialState = {
+        xs: xs,
+        vs: vs,
+        masses: masses,
+        constraints_distance: constraints_distance,
+        constraints_pin: [],
+        collisions: [],
+        gravity: [g, [0,-1]],
+        time: 0,
+        polygons: [polGround],
+        }
+
+    stateStory.push(initialState);
+
+    
+    //lets now calculate the state at each time in tArray, we rotate each particle xo by omega*t
+
+    for (let t of tArray){
+        let x0 = [];
+        let v0 = [];
+        let dxCom = math.multiply(vCom,t);
+        for (let i = 0; i < nparticles; i++){
+            let anglei = i*angle;
+            //lets retrieve the ith original position
+            let x = [radius*Math.cos(anglei), radius*Math.sin(anglei)];
+            let xrot = rotate([x],omega*t,[0,0],"rad")[0];
+            //lets add the displacement of the center of mass
+            xrot = math.add(xrot,dxCom);
+            x0.push(xrot);
+
+            let vang = [omega*x[1], -omega*x[0]];
+            let vparticle = math.add(vCom,vang);
+            v0.push(vparticle);
+        }
+
+        x0 = translate(x0, origin);
+
+        let state = {
+            xs: x0,
+            vs: v0,
+            masses: masses,
+            constraints_distance: constraints_distance,
+            constraints_pin: [],
+            collisions: [],
+            gravity: [g, [0,-1]],
+            time: t,
+            polygons: [polGround],
+            }
+
+        stateStory.push(state);
+
+    }
+
+
+
+    return stateStory;
+
+}
+
+function integrateSystem(STATE,PARAMETERS, nsteps, method = "SemiEulerActiveSet"){
     let s = STATE;
 
     let STATE_STORY = [s];
@@ -1937,32 +1792,25 @@ function integrateSystemNonContact(STATE,PARAMETERS, nsteps){
     for (let i = 0; i < nsteps; i++){
         //lets copy the state object, just in case
         let state = JSON.parse(JSON.stringify(s));
-        let newState = stepSemiEulerNonContact(state,PARAMETERS);
-        STATE_STORY.push(newState);
-        s = newState;
+        if (method === "SemiEuler"){
+            let newState = stepSemiEuler(state,PARAMETERS);
+            STATE_STORY.push(newState);
+            s = newState;
+        }//else if method  SemiEulerActiveSet
+
+        else if (method === "SemiEulerActiveSet"){
+            let newState = stepSemiEulerActiveSet(state,PARAMETERS);
+            STATE_STORY.push(newState);
+            s = newState;
+             }
+
+        else {
+            throw new Error(`Method ${method} not implemented`)
+        }
     }
 
     return STATE_STORY;
-
-
-
-}
-
-function integrateSystem(STATE,PARAMETERS, nsteps){
-    let s = STATE;
-
-    let STATE_STORY = [s];
-
-    for (let i = 0; i < nsteps; i++){
-        //lets copy the state object, just in case
-        let state = JSON.parse(JSON.stringify(s));
-        let newState = stepSemiEulerContact(state,PARAMETERS);
-        STATE_STORY.push(newState);
-        s = newState;
     }
-
-    return STATE_STORY;
-}
 
 
 let referenceConfigurations = {
@@ -1994,12 +1842,13 @@ function solveReferenceSystems(nameSystem,PARAMETERS,nsteps){
 }
 
 
-export { stepTestSemiEuler,stepSemiEulerContact, calculateCOM, calculateKineticEnergy,
-        stepSemiEulerNonContact, solveReferenceSystems, pendulumSystemConfig, pendulumAnalyticalSolution,
+export { stepSemiEuler,stepSemiEulerActiveSet, calculateCOM, calculateKineticEnergy,
+     solveReferenceSystems, pendulumSystemConfig, pendulumAnalyticalSolution,
         doublePendulumSystemConfig, integrateSystem, particleOnStairs,
          initState, chainSystemConfig,  tumblingBoxSystemConfig,tumblingBoxAnalyticalSolution,
             dumbellSlidingOnWallSystemConfig, dumbellSlidingOnWallAnalyticalSolution,
-        computeJacobians, solveConstraints, stepUnpackStateWithContact,
+            rollingCircleSystemConfig, rollingCircleAnalyticalSolution, calculateInertiaMoment,
+        computeJacobians, solveConstraints, stepUnpackState,
          collisions2ContactConstraints,computeExternalForces, calculateConstraintForces,
          CollisionHandler, ConstraintContact, Polygon
         };

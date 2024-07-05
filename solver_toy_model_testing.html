@@ -63,9 +63,10 @@
     import {integrateSystem, pendulumSystemConfig,
          doublePendulumSystemConfig,initState,particleOnStairs, tumblingBoxSystemConfig,
          tumblingBoxAnalyticalSolution,
-          dumbellSlidingOnWallSystemConfig, dumbellSlidingOnWallAnalyticalSolution} from "./solver.js";
+          dumbellSlidingOnWallSystemConfig, dumbellSlidingOnWallAnalyticalSolution,
+        rollingCircleSystemConfig,rollingCircleAnalyticalSolution } from "./solver.js";
     import {displayObjectInDiv, displayMouseCoords} from "./utils.js";
-    import {Drawer} from "./drawing.js"; //drawer.drawState(STATE,VISUAL_OPTIONS,particles_group_id); is the function to draw the state of the system
+    import {Drawer,plotNonContactLagrangeMultipliers, plotContactLagrangeMultipliers, plotAngleDistanceConstraints} from "./drawing.js"; //drawer.drawState(STATE,VISUAL_OPTIONS,particles_group_id); is the function to draw the state of the system
     import {calculateCOM, calculateKineticEnergy} from "./solver.js";
     import {pendulumAnalyticalSolution} from "./solver.js";//pendulumAnalyticalSolution(thetaO, g, L, tarray) returns [xs,vs]
         // I'll be testing the solver against some toy models with analytical solutions
@@ -616,6 +617,8 @@
         let nsteps = TIME/PARAMETERS.dt;
         let tumblingBoxStateStory = integrateSystem(tumblingBoxSTATE0, PARAMETERS, nsteps);
 
+        plotContactLagrangeMultipliers(tumblingBoxStateStory, "tumblingBox_plots_panel");
+
 
         let drawer = new Drawer(svgMain, [-2,2],[-2,2]);
 
@@ -1089,6 +1092,73 @@
         return dumbellStateStory;
     }
 
+    // the funcitons are quite repetitive, lets do a class that packages the functionality
+    function drawStateStories(stateStoryModel, stateStoryAnalytical, modelName,VISUAL_OPTIONS){
+        let svgName = modelName + "_svg";
+        let svgMain = document.getElementById(svgName);
+        if(svgMain == null){
+            createModelPanels(modelName);
+            svgMain = document.getElementById(svgName);
+        }
+
+        let particlesGroupId = modelName + "_particles";
+        let polygonsGroupId = modelName + "_polygons";
+        let drawer = new Drawer(svgMain, [-2,2],[-2,2]);
+        //lets increase the width of svgMain
+
+        let particlesGroupIdAnalytical = modelName + "_particles_analytical";
+        let polygonsGroupIdAnalytical = modelName + "_polygons_analytical";
+        let drawerAnalytical = new Drawer(svgMain, [-2,2],[-2,2]);
+        let VISUAL_OPTIONS2 = JSON.parse(JSON.stringify(VISUAL_OPTIONS));
+        VISUAL_OPTIONS2.particle_density = 0.02;
+        VISUAL_OPTIONS2.color_particles = "green";
+
+        let nsteps = stateStoryModel.length;
+
+        drawer.drawState(stateStoryModel[0], particlesGroupId, polygonsGroupId, VISUAL_OPTIONS);
+       // drawerAnalytical.drawState(stateStoryAnalytical[0], particlesGroupIdAnalytical, polygonsGroupIdAnalytical, VISUAL_OPTIONS2);
+
+        let slider = document.getElementById(modelName + "_slider");
+        slider.min = 0;
+        slider.max = nsteps - 1;
+
+        slider.addEventListener("input", function(){
+            let index = parseInt(this.value);
+            let STATE = stateStoryModel[index];
+            drawer.drawState(STATE, particlesGroupId, polygonsGroupId, VISUAL_OPTIONS);
+            let STATEA = stateStoryAnalytical[index];
+            drawerAnalytical.drawState(STATEA, particlesGroupIdAnalytical, polygonsGroupIdAnalytical, VISUAL_OPTIONS2);
+            // we display the STATE[index] in the state_info_panel
+            let stateInfoId = modelName + "_state_info_panel";
+            displayObjectInDiv(STATE, stateInfoId);
+            
+        });
+
+        function canvas2ModelCallback(points){
+            return drawer.canvas2Model(points, true)// true for shifing origin, false if transforming forces
+        }
+
+        displayMouseCoords(svgMain,  canvas2ModelCallback )
+
+        return [drawer, drawerAnalytical];
+    }
+
+    function rollingCircle( nparticles, radius, g, omega, TIME, PARAMETERS, VISUAL_OPTIONS){
+        let rollingCircleSTATE0 = rollingCircleSystemConfig(nparticles, radius, g, omega);
+        rollingCircleSTATE0 = initState(rollingCircleSTATE0, PARAMETERS);//this calculates forces
+        let nsteps = TIME/PARAMETERS.dt;
+        let rollingCircleStateStory = integrateSystem(rollingCircleSTATE0, PARAMETERS, nsteps);
+        let tArray = rollingCircleStateStory.map(s => s.time);
+        let rollingCircleStateStoryAnalytical = rollingCircleAnalyticalSolution(nparticles, radius, g, omega, tArray);
+        
+
+        let [drawer, drawerAnalytical] = drawStateStories(rollingCircleStateStory, rollingCircleStateStoryAnalytical, "rollingCircle", VISUAL_OPTIONS);
+        plotContactLagrangeMultipliers(rollingCircleStateStory, "rollingCircle_plots_panel");
+
+
+        return rollingCircleStateStory;
+    }
+
 
     let PARAMETERS = {"dt": 0.01, "alpha":20,"beta":20  , "collisionThreshold":0.03,"muFriction":1};
     let VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":1};
@@ -1116,7 +1186,7 @@
 
         let args3 = {"side": 0.4, "g": 0.1, "Lwedge": 2, "angle": 49, "TIME": 7};
         VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":0.1}; 
-        PARAMETERS = {"dt": 0.005, "alpha":60,"beta":60  , "collisionThreshold":0.001,"muFriction":2};
+        PARAMETERS = {"dt": 0.01, "alpha":40,"beta":40  , "collisionThreshold":0.001,"muFriction":2};
 
         let story3 = tumblingBox(args3.side,args3.g,args3.Lwedge,args3.angle,args3.TIME, PARAMETERS, VISUAL_OPTIONS);
         window.story3 = story3;
@@ -1124,9 +1194,17 @@
 
         let args4 = {"L": 1, "mass1": 1, "mass2": 1, "angle": 45, "TIME": 5, "g": 0.1};
         VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":0.1};
-        PARAMETERS = {"dt": 0.001, "alpha":5,"beta":5  , "collisionThreshold":0.001,"muFriction":0.0}
+        PARAMETERS = {"dt": 0.01, "alpha":5,"beta":5  , "collisionThreshold":0.001,"muFriction":0.0}
         let story4 = dumbellSliding(args4.L, args4.mass1, args4.mass2, args4.angle,args4.g, args4.TIME, PARAMETERS, VISUAL_OPTIONS);
         window.story4 = story4;
+
+        let args5 = {"nparticles": 24, "radius": 1, "g": 0.1, "omega": 0.3, "TIME": 3};
+        VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":0.1};
+        PARAMETERS = {"dt": 0.005, "alpha":15,"beta":15  , "collisionThreshold":0.001,"muFriction":0.1};
+        let story5 = rollingCircle(args5.nparticles, args5.radius, args5.g, args5.omega, args5.TIME, PARAMETERS, VISUAL_OPTIONS);
+        window.story5 = story5;
+
+
 
 
      }

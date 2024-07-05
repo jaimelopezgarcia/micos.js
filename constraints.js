@@ -141,4 +141,45 @@ class ConstraintPin {
     }
 }
 
-export { ConstraintDistance, ConstraintPin };
+
+class ConstraintContact{
+  // this class assumes that the constraint is active
+  // is the outer loop responsibility to check if the constraint is active and remove the resolved constraints
+  //so the edge won't change while the constraint is active by design
+  constructor(particle_index, edge_index, polygon){
+      this.particle_index = particle_index;
+      this.edge_index = edge_index;
+      this.polygon = polygon;
+  }
+
+  getType(){
+      return "contact";
+  }
+
+  getParticleIndices(){
+      return [this.particle_index];
+  }
+
+  getConstraintValue(xarray){
+      //C(x) = 0 if the constraint is satisfied
+      //It is basically the signed distance from the particle to the edge \vec{n}^{T}\vec{r_{ep}}
+      let point = xarray[this.particle_index];
+      let dot_n_r = this.polygon.getClosestEdgeNormalProjection(point);
+      return dot_n_r;
+
+  }
+
+  getJacobianParticles(xarray){
+      //Jacobian is the normal vector of the edge
+      let normal = this.polygon.getNormal(this.edge_index);
+      return [normal];
+  }
+
+  getDotJacobianParticles(varray){
+      //dot_Jacobian is zero (static polygon, piecewise linear)
+
+      return [[0,0]];
+  }
+}
+
+export { ConstraintDistance, ConstraintPin, ConstraintContact};

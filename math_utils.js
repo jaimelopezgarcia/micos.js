@@ -91,17 +91,22 @@ function rotateCOM(points, angle, angle_unit="deg"){
 
 
 
-function calculateCOM(points, masses){
-    //points is a [npoints, 2] array
-    //masses is a [npoints] array
-    // lets throw an error on dimensions mismatch of points and masses
-    if (points.length != masses.length){
-        throw new Error("Invalid dimensions of points or masses");
+function calculateCOM(xs,masses){
+    //xs array of particle possitions
+     if (xs.length !== masses.length){
+        throw new Error("The xs and masses arrays should have the same length")
+      }
+    if (xs[0].length !== 2){
+      throw new Error("The xs array should have 2 components")
     }
-    let COM = math.multiply(math.transpose(points), masses);
-    COM = math.divide(COM, math.sum(masses));
-    return COM;
-}
+    let total_mass = masses.reduce((a,b)=>a+b,0);
+    let weighted_xs = xs.map((x,i)=>math.multiply(masses[i]/total_mass,x));
+    let COM = weighted_xs.reduce((a,b)=>math.add(a,b),math.zeros(2));
+  
+      
+      return COM;
+    }
+
 
 function calculateCOMInertiaMoment(points, masses){
     //points is a [npoints, 2] array
@@ -129,6 +134,21 @@ function calculateInertiaMoment(points,masses, center){
 
 
 
+function calculateKineticEnergy(vs,masses){
+    if (vs.length !== masses.length){
+        throw new Error("The xs and masses arrays should have the same length")
+    }
+    if (vs[0].length !== 2){
+    throw new Error("The xs array should have 2 components")
+    }
+    //Ekin = 0.5*v^{T}Mv
+    let M = math.matrix(masses.map(mass=>[mass,mass])).reshape([-1]);//vx and vy have the same mass(same particle)
+    M = math.diag(M);
+    let v_matrix = math.flatten(math.matrix(vs));
+
+    let Ekin = 0.5*math.multiply(math.transpose(v_matrix),math.multiply(M,v_matrix));
+    return Ekin;
+    }
 
 
 
@@ -559,4 +579,5 @@ function integrateOdeOnTarray(fun, x0, tArray, method = "RK4"){
 export {translate, rotate, rotateCOM,scale,  model2Canvas, canvas2Model,
      bisectionSearch,goldenSectionSearch, dfdxFun, d2fdx2Fun, dArraydtFun,
       getNeighborsDelauney, calculateCOM, getArrayDimensions, getArrayShape, isShapeEqual, lerp,
-      calculateCOMInertiaMoment, calculateInertiaMoment, integrateOde, integrateOdeOnTarray,EulerStep, RK4Step};
+      calculateCOMInertiaMoment, calculateInertiaMoment, integrateOde, integrateOdeOnTarray,EulerStep, RK4Step,
+    calculateKineticEnergy};

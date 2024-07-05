@@ -54,9 +54,9 @@
     <script type="module">
 
         import {computeJacobians,
-              stepUnpackStateWithContact, Polygon,
+              stepUnpackState, Polygon,
                CollisionHandler, solveConstraints, computeExternalForces,
-               calculateConstraintForces , stepSemiEulerContact} from "./solver.js";
+               calculateConstraintForces , stepSemiEuler,stepSemiEulerActiveSet} from "./solver.js";
         import {drawCircles, drawLines, drawArrow,
              drawPolygon, drawParticles,PolygonDrawer, CollisionDrawer,Drawer} from "./drawing.js";
         import {model2Canvas, canvas2Model,translate, scale,rotateCOM,getNeighborsDelauney} from "./math_utils.js";
@@ -327,9 +327,9 @@
    
         
       //  let STATE = generateDummyState();
-      // let STATE = rigidRectangleState(0.2,0.2,[0.2,0.5]);
-       // let STATE = dumbellGroundState();
-       let STATE = circleParticlesState(0.4, 5, origin = [0.3,0.6])
+       let STATE = rigidRectangleState(0.2,0.2,[0.2,0.5]);
+        //let STATE = dumbellGroundState();
+       //let STATE = circleParticlesState(0.4, 10, origin = [0.3,0.6])
         let colHandler = new CollisionHandler();
         let drawer = new Drawer(SVG);
         drawer.drawState(STATE);
@@ -356,11 +356,11 @@
         }
 
         let PARAMETERS = {
-            "dt": 0.01,
+            "dt": 0.03,
             "alpha":10,
             "beta":10,
-            "collisionThreshold": 0.05,
-            "muFriction": 0.6,
+            "collisionThreshold": 0.001,
+            "muFriction": 0.,
         }
 
         let lastTime = performance.now();
@@ -370,7 +370,8 @@
         let mainCallback = () => {
            
             console.log(PARAMETERS.dt)
-            let newSTATE = stepSemiEulerContact(STATE,PARAMETERS);
+          //  let newSTATE = stepSemiEuler(STATE,PARAMETERS);
+            let newSTATE = stepSemiEulerActiveSet(STATE,PARAMETERS);
             STATE_STORY.push(newSTATE);
             for (let key in newSTATE){
                 updateState(key,newSTATE[key],STATE);
