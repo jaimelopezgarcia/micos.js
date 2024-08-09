@@ -1,6 +1,36 @@
+/*
+Requires math.js to be loaded on the page
+*/
+
+function getAngle(vectorsQuery, vectorTarget, angle_unit="rad"){
+    //vectorsQuery is a [npoints, 2] array of vectors whose angle with respect to vectorTarget
+
+    //we'll calculate. This function must return a [npoints] array of angles
+    
+    if (!Array.isArray(vectorsQuery) || !Array.isArray(vectorTarget)){
+        throw new Error(`Invalid type of vectorsQuery or vectorTarget. Expected Array, got ${typeof vectorsQuery} and ${typeof vectorTarget}`);
+    }
+
+    if ( getArrayDimensions(vectorsQuery) > 2){
+        throw new Error(`Invalid dimensions of vectorsQuery. Expected 1 or 2, got ${getArrayDimensions(vectorsQuery)}`);
+    }
+
+    // if vectorsQuery is a single vector we'll [vectorQuery]
+    if (getArrayDimensions(vectorsQuery) == 1){
+        vectorsQuery = [vectorsQuery];
+    }
+    
+    let angles = vectorsQuery.map(v => math.unit(math.atan2(v[1], v[0]) - math.atan2(vectorTarget[1],
+                                         vectorTarget[0]), "rad").toNumber(angle_unit));
+    
+    return angles;
+}
+
+
 
 
 function getArrayShape(array) {
+    // example usage getArrayShape([ [1,2],[3,4] ]) returns [ 2, 2 ]
     let shape = [];
     while (Array.isArray(array)) {
       shape.push(array.length);
@@ -10,6 +40,7 @@ function getArrayShape(array) {
   }
 
   function getArrayDimensions(array) {
+    //example usage getArrayDimensions([[[1,2],[3,4]],[[5,6],[7,8]]]) returns 3
     let shape = getArrayShape(array);
     return shape.length;
     }
@@ -19,6 +50,9 @@ function isShapeEqual(array1, array2) {
     let shape2 = getArrayShape(array2);
     return JSON.stringify(shape1) === JSON.stringify(shape2);
     }
+
+
+
 
 
 function translate(points, shift){
@@ -134,7 +168,7 @@ function calculateInertiaMoment(points,masses, center){
 
 
 
-function calculateKineticEnergy(vs,masses){
+function _calculateKineticEnergy(vs,masses){
     if (vs.length !== masses.length){
         throw new Error("The xs and masses arrays should have the same length")
     }
@@ -152,8 +186,61 @@ function calculateKineticEnergy(vs,masses){
 
 
 
+//lets write a more general function that will be fed a [ntimesteps,nparticles,2] array of velocities 
+//and a [nparticles] array of masses and will return [ntimesteps] array of kinetic energies
+// lets make it so if  a [nparticles,2] array of velocities is given it 
+//returns a single kinetic energy
+
+function calculateKineticEnergy(vsArray,masses){
+    /*
+    vsArray is a [ntimesteps,nparticles,2] or [nparticles,2] array of velocities
+    masses is a [nparticles] array of masses
+    Returns a [ntimesteps] array of kinetic energies or a single kinetic energy if a single timestep is given
+    */
+    let ndims = getArrayDimensions(vsArray);
+    if (ndims == 2){
+        //single timestep
+        let Ekin = _calculateKineticEnergy(vsArray, masses);
+        return Ekin;
+    }
+    else if (ndims == 3){
+        //multiple timesteps
+        let EkinArray = vsArray.map(vs => _calculateKineticEnergy(vs, masses));
+        return EkinArray;
+    }
+    else{
+        throw new Error(`Invalid dimensions of vsArray. Expected 2 or 3, got ${ndims}`);
+    }
+}
 
 
+function getNeighborsDict(STATE){
+    let constraintsDistance = STATE.constraints_distance;
+    let constraintsPin = STATE.constraints_pin;
+    let neighborsDict = {};
+    let pinDict = {};
+    for(let i = 0; i < constraintsDistance.length; i++){
+        let [iParticle, jParticle, distance] = constraintsDistance[i];
+        if(neighborsDict[iParticle] == undefined){
+            neighborsDict[iParticle] = [[jParticle, distance]];
+        }else{
+            neighborsDict[iParticle].push([jParticle, distance]);
+        }
+
+        if(neighborsDict[jParticle] == undefined){
+            neighborsDict[jParticle] = [[iParticle, distance]];
+        }else{
+            neighborsDict[jParticle].push([iParticle, distance]);
+        }
+    }
+
+    for(let i = 0; i < constraintsPin.length; i++){
+        let [iParticle, pinPoint, distance] = constraintsPin[i];
+        pinDict[iParticle] = [pinPoint, distance];
+    }
+
+    return [neighborsDict, pinDict];
+}
 
 
 
@@ -576,8 +663,8 @@ function integrateOdeOnTarray(fun, x0, tArray, method = "RK4"){
 
 
 
-export {translate, rotate, rotateCOM,scale,  model2Canvas, canvas2Model,
+export {getAngle,translate, rotate, rotateCOM,scale,  model2Canvas, canvas2Model,
      bisectionSearch,goldenSectionSearch, dfdxFun, d2fdx2Fun, dArraydtFun,
       getNeighborsDelauney, calculateCOM, getArrayDimensions, getArrayShape, isShapeEqual, lerp,
       calculateCOMInertiaMoment, calculateInertiaMoment, integrateOde, integrateOdeOnTarray,EulerStep, RK4Step,
-    calculateKineticEnergy};
+    calculateKineticEnergy,getNeighborsDict};

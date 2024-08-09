@@ -265,5 +265,195 @@ function makeCircleDraggable(SVG, particle_id,
 
 }
 
+
+class SelectionPanel {
+    /*
+    Example usage
+    const data = {
+        Particle_0: ['X Position', 'Y Position'],
+        Particle_1: ['X Position', 'Y Position']
+    };
+
+    const selectionPanel = new SelectionPanel(data);
+
+    //methods
+    selectionPanel.gatherSelections(); //returns an array of the selected checkboxes
+    selectionPanel.clearSelections(); //clears all the selected checkboxes
+    selectionPanel.selectAll(); //selects all the checkboxes
+    
+
+    Example of the html structure that will be created
+        <div class="selectionPanel">
+            <ul>
+                <li>
+                    <span>Particle_0</span>
+                    <ul>
+                        <li><input type="checkbox" id="particle_0_x"> X Position</li>
+                        <li><input type="checkbox" id="particle_0_y"> Y Position</li>
+                    </ul>
+                </li>
+                <li>
+                    <span>Particle_1</span>
+                    <ul>
+                        <li><input type="checkbox" id="particle_1_x"> X Position</li>
+                        <li><input type="checkbox" id="particle_1_y"> Y Position</li>
+                    </ul>
+                </li>
+            </ul>
+    */
+    constructor(data, parentDivId, id = "selectionPanel") {
+        this.id = id;
+        const selector = `#${id}`;
+
+        this.selector = selector;
+        this.data = data;
+        this.parentDiv = document.getElementById(parentDivId);
+        if (!this.parentDiv) {
+            console.error('Parent div not found');
+            return;
+        }
+        this.selectionPanelDiv = this.init();
+    }
+
+    init() {
+        let selectionPanelDiv = this.createSelectionPanel(this.data, this.parentDiv);
+        this.injectStyles();
+        this.attachEventListeners();
+
+        return selectionPanelDiv;
+    }
+
+    getPanel() {
+        return this.selectionPanelDiv;
+    }
+
+    createSelectionPanel(data,parentDiv) {
+
+        let selectionPanel = document.querySelector(`${this.selector}`);
+        // if not null we throw an error of non-unique id
+        if (selectionPanel) {
+            console.error('Non-unique id');
+            return;
+        }
+
+        selectionPanel = document.createElement('div');
+        selectionPanel.id = this.id;
+        parentDiv.appendChild(selectionPanel);
+    
+
+        //lets assert the correct format of data structure  {key: [valueString1, valueString2, ...]}
+        if (!data || typeof data !== 'object') {
+            console.error('Invalid data format');
+            return;
+        }
+
+
+            
+            let ul = document.createElement('ul');
+            for (let key in data) {
+                let li = document.createElement('li');
+                let span = document.createElement('span');
+                span.textContent = key;
+                li.appendChild(span);
+                let subUl = document.createElement('ul');
+                for (let i = 0; i < data[key].length; i++) {
+                    let subLi = document.createElement('li');
+                    let input = document.createElement('input');
+                    input.type = 'checkbox';
+                    //for id we use key_valueStringIndex
+                    input.id = `${key}->${data[key][i]}`;
+                    let label = document.createElement('label');
+                    label.htmlFor = input.id;
+                    label.textContent = data[key][i];
+                    subLi.appendChild(input);
+                    subLi.appendChild(label);
+                    subUl.appendChild(subLi);
+                }
+                li.appendChild(subUl);
+                ul.appendChild(li);
+            }
+
+            selectionPanel.appendChild(ul);
+
+        return selectionPanel;
+        }
+
+    injectStyles() {
+        const styles = `
+            ${this.selector} ul {
+                list-style-type: none;
+            }
+
+            ${this.selector} li > ul {
+                display: none;
+                margin-left: 20px;
+            }
+            ${this.selector} li > span:hover + ul,
+            ${this.selector} li > span:focus + ul {
+                display: block;
+            }
+            ${this.selector} input[type="checkbox"]:checked + label {
+                font-weight: bold;
+            }
+
+            ${this.selector} li > span::before {
+            content: '▶';
+            display: inline-block;
+            margin-right: 5px;
+            transform: rotate(0deg);
+            transition: transform 0.3s ease;
+        }
+
+        /* Rotate marker when ul is displayed */
+        ${this.selector} li > span:hover::before,
+        ${this.selector} li > span:focus::before {
+            transform: rotate(90deg);
+        }
+        `;
+        //lets append it to the existing style tag
+        let styleTag = document.querySelector('style');
+        if (!styleTag) {
+            styleTag = document.createElement('style');
+            document.head.appendChild(styleTag);
+        }
+        styleTag.textContent += styles;
+
+    }
+
+    attachEventListeners() {
+        document.querySelectorAll(`${this.selector} li > span`).forEach(item => {
+            item.addEventListener('click', () => {
+                let subList = item.nextElementSibling;
+                subList.style.display = subList.style.display === "block" ? "none" : "block";
+            });
+        });
+    }
+
+    gatherSelections() {
+        let selections = [];
+        document.querySelectorAll(`${this.selector} input[type="checkbox"]:checked`).forEach(item => {
+            selections.push(item.id);
+        });
+        return selections;
+    }
+
+    clearSelections() {
+        document.querySelectorAll(`${this.selector} input[type="checkbox"]:checked`).forEach(item => {
+            item.checked = false;
+        });
+    }
+
+    selectAll() {
+        document.querySelectorAll(`${this.selector} input[type="checkbox"]`).forEach(item => {
+            item.checked = true;
+        });
+    }
+
+
+}
+
+
 export {populateVisualOptionsPanel, populateParametersPanel,
-        updateParameters, replaceParameters,updateVisualOptions,makeParticleDraggable, makeCircleDraggable, particleInteractionMouse};
+        updateParameters, replaceParameters,updateVisualOptions,makeParticleDraggable, makeCircleDraggable, particleInteractionMouse,
+        SelectionPanel
+        };

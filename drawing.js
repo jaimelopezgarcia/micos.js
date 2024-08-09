@@ -578,6 +578,7 @@ function drawForces(STATE, svg, scaleArrows = 1.0){
       let fcontact = STATE.contact_forces;
       let ffriction = STATE.friction_forces;
       let ftotal = STATE.total_forces;
+      let factuators = STATE.actuator_forces;
       let xs = STATE.xs;
       let sc = scaleArrows;
       for (let i = 0; i < xs.length; i++){
@@ -592,6 +593,8 @@ function drawForces(STATE, svg, scaleArrows = 1.0){
           drawArrowd3(svg, x, y, x+sc*fx, y+sc*fy, "arrow_ffriction_" + i, "arrow force ffriction", "purple");
           [fx, fy] = ftotal[i];
           drawArrowd3(svg, x, y, x+sc*fx, y+sc*fy, "arrow_ftotal_" + i, "arrow force ftotal", "black");
+          [fx, fy] = factuators[i];
+          drawArrowd3(svg, x, y, x+sc*fx, y+sc*fy, "arrow_factuators_" + i, "arrow force factuators", "orange");
       }
   }
 
@@ -1202,7 +1205,9 @@ class Drawer{
         
         let nparticles = STATE.xs.length;
         let names2InitZerosIfMissing = ["vs","external_forces", "constraint_forces",
-                                           "contact_forces", "friction_forces", "total_forces"];
+                                           "contact_forces", "friction_forces",
+                                           "actuator_forces",
+                                            "total_forces"];
         let names2InitEmptyArrayIfMissing = ["polygons", "constraints_distance",
                                              "constraints_pin","collisions","new_collisions","resolved_collisions",
                                              "springs","springs2points"];
@@ -1328,6 +1333,7 @@ class Drawer{
         canvasSTATE.contact_forces = this.model2Canvas(STATE.contact_forces,false);
         canvasSTATE.friction_forces = this.model2Canvas(STATE.friction_forces,false);
         canvasSTATE.total_forces = this.model2Canvas(STATE.total_forces,false);
+        canvasSTATE.actuator_forces = this.model2Canvas(STATE.actuator_forces,false);
 
         //we need to transform constraints data, constraints_distance is a list of [idx1,idx2,distance]
         // we need to recalculated the distance in canvas coordinates

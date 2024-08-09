@@ -1,13 +1,17 @@
 import { ConstraintDistance, ConstraintPin, ConstraintContact } from "./constraints.js";
-import { translate, rotate,rotateCOM, getNeighborsDelauney, calculateInertiaMoment,
-    integrateOde, integrateOdeOnTarray, isShapeEqual, calculateCOM, calculateKineticEnergy} from "./math_utils.js";
+import {getAngle, translate, rotate,rotateCOM, getNeighborsDelauney, calculateInertiaMoment,
+    integrateOde, integrateOdeOnTarray, isShapeEqual, calculateCOM, calculateKineticEnergy, getNeighborsDict} from "./math_utils.js";
+import {ConstantForce,Gravity,Damping,Spring,Spring2Point,computeExternalForces} from "./forces_actuators.js";
 //IntegrateSystem(fun, x0, tf, h) where x0 is a R dim array, fun is a R->R dxdt fun 
 // integrateOdeOnTarray(fun,xo,tArray,method = "RK4")
 //h is the time step, tf is the final time, by default uses RK4
 //all constraints must have getConstraintValue(xarray) getJacobianParticles(xarray) getDotJacobianParticles(varray) methods
-//function dArraydtFun(array, h){
-    //calculates numericalderivative for an array of values, assuming they come as discrete evaluation of a t->R function sampled at fixed intervals h
-    //returns an array of the same length as array
+
+/*
+All forces has the signature method getForceArray(xarray, varray, masses)
+computeExternalForces has signature computeExternalForces(forces,xarray,varray,masses)
+//where forces is an array of force objects, xarray is the position array, varray is the velocity array and masses is the masses array
+*/
 const DEBUG = true;
 
 if (DEBUG){
@@ -16,6 +20,187 @@ if (DEBUG){
 
 
 
+//lets write a State class, that will wrap the basic state object and will have some utility methods
+//lets make all methods have explicit arguments, so we can use them in the main loop
+
+class StateUtils{
+    constructor(){
+
+    }
+
+    unpackState(STATE){
+        //lets call the unpackState function
+        return stepUnpackState(STATE);
+    }
+    getForcesObjs(STATE){
+        let [_1, forceObjs, _2] = this.unpackState(STATE);
+        return forceObjs;
+    }
+    getConstraintsObjs(STATE){
+        let [constraintObjs, _1, _2] = this.unpackState(STATE);
+        return constraintObjs;
+    }
+    getPolygonsObjs(STATE){
+        let [_1, _2, polygonsObjs] = this.unpackState(STATE);
+        return polygonsObjs;
+    }
+    getJacobianMatrices(STATE){
+        let s = STATE;
+        let [J,dotJ] = computeJacobians(this.getConstraintsObjs(s), s.xs, s.vs);
+        return [J,dotJ];
+    }
+    getExternalForces(STATE){
+        let s = STATE;
+        let forces = computeExternalForces(this.getForcesObjs(s), s.xs, s.vs, s.masses);
+        return forces;
+    }
+    solveConstraints(STATE, alpha = 0.00, beta = 0.00, clipNegativeContact = false){
+        let s = STATE;
+        let [J,dotJ] = this.getJacobianMatrices(s);
+        let forces = this.getExternalForces(s);
+        let out_dict = solveConstraints(J, dotJ, s.xs, s.vs, forces, s.masses, this.getConstraintsObjs(s), alpha, beta, clipNegativeContact);
+        return out_dict;
+    }
+
+    getAngleBtwParticlesHorizontal(STATE, idxP1, idxP2, unit = "rad"){
+        //angle between r_{12} = r_{2} - r_{1} and the horizontal axis [1,0]
+        let xs = STATE.xs;
+        let [x1,y1] = xs[idxP1];
+        let [x2,y2] = xs[idxP2];
+        let dr = [x2-x1,y2-y1];
+        return getAngle([dr],[1,0],unit)[0];
+    }
+    getAngleBtwParticlesPairs(STATE,pair1,pair2){
+        //pair1 = [idxP1,idxP2], pair2 = [idxP3,idxP4] we'll get r_{12} and r_{34} and get the angle between them
+        let xs = STATE.xs;
+        let [idxP1,idxP2] = pair1;
+        let [idxP3,idxP4] = pair2;
+        let [x1,y1] = xs[idxP1];
+        let [x2,y2] = xs[idxP2];
+        let [x3,y3] = xs[idxP3];
+        let [x4,y4] = xs[idxP4];
+        let dr12 = [x2-x1,y2-y1];
+        let dr34 = [x4-x3,y4-y3];
+        return getAngle([dr12],[dr34])[0];
+    }
+
+    getAngleBtwConstraints(STATE, idxC1, idxC2){
+        //constraints_distance is a [[idx1,idx2,distance],...] 
+        let constraints = this.getConstraintsObjs(STATE);
+        let cs = [constraints[idxC1],constraints[idxC2]];
+
+        // so if the constraint is distance we get idx1 and idx2 and calculate r_{12}
+        // if the constraint is pin we get idx and pin_point and calculate r_{idx,pin_point}
+        //we then calculate the angle between the vectors
+        let xs = STATE.xs;
+
+        let anglesHorizontal = [];//we then sustract angles[1]-angles[0] to get the angle between the constraints
+        for (let c of cs){
+            if (c.getType() === "distance"){
+                let idx1 = c.getParticleIndices()[0];
+                let idx2 = c.getParticleIndices()[1];
+                let angle = this.getAngleBtwParticlesHorizontal(STATE,idx1,idx2);
+                anglesHorizontal.push(angle);
+            }
+            else if (c.getType() === "pin"){
+                let idx = c.getParticleIndices()[0];
+                let point = xs[idx];
+                let pin_point = c[1]
+                let angle = getAngle([math.subtract(point,pin_point)],[1,0])[0];
+                anglesHorizontal.push(angle);
+            }
+            else{
+                throw new Error(`Constraint type ${c.getType()} not pin nor distance, but ${c.getType()}`);
+            }
+        }
+        return anglesHorizontal[1]-anglesHorizontal[0];
+
+
+    }
+
+
+    getAngleBtwConstraintsDistanceHorizontal(STATE, unit = "rad"){
+        //constraints_distance is a [[idx1,idx2,distance],...] array, so we loop over it and get 
+        //the angle between r_{12} and the horizontal axis
+        let constraints = this.getConstraintsObjs(STATE);
+        let xs = STATE.xs;
+        let angles = [];
+        for (let constraint of constraints){
+            if (constraint.getType() === "distance"){
+                let idx1 = constraint.getParticleIndices()[0];
+                let idx2 = constraint.getParticleIndices()[1];
+                let angle = this.getAngleBtwParticlesHorizontal(STATE,idx1,idx2,unit);
+                angles.push(angle);
+            }
+        }
+         
+        return angles;
+    }
+
+    getAngleBtwConstraintsPinHorizontal(STATE,unit = "rad"){
+        //constraints_pin is a [[idx,pin_point,pin_distance],...] array, so we loop over it and get 
+        //the angle between r_{idx,pin_point} and the horizontal axis
+        let constraints = this.getConstraintsObjs(STATE);
+        let xs = STATE.xs;
+        let angles = [];
+        for (let constraint of constraints){
+            if (constraint.getType() === "pin"){
+                let idx = constraint.getParticleIndices()[0];
+                let point = xs[idx];
+                let pin_point = constraint.getPinPoint();
+                let angle = getAngle([math.subtract(point,pin_point)],[1,0],unit)[0];
+                angles.push(angle);
+            }
+        }
+         
+        return angles;
+    }
+
+    getKineticEnergy(STATE){
+        let masses = STATE.masses;
+        let vs = STATE.vs;
+        return calculateKineticEnergy(vs,masses);
+    }
+
+    getPotentialEnergy(STATE){
+        let g = STATE.gravity[0];
+        //we asume direction is [0,-1] so mg*xs[1] is the potential energy for each particle
+        let xs = STATE.xs;
+        let masses = STATE.masses;
+        let n = xs.length;
+        let pe = 0;
+        for (let i = 0;i<n;i++){
+            pe += masses[i]*g*xs[i][1];
+        }
+        return pe;
+    }
+
+    getTotalEnergy(STATE){
+        //neglecting the spring potential energy
+        return this.getKineticEnergy(STATE)+this.getPotentialEnergy(STATE);
+    }
+
+    getCOM(STATE){
+        let masses = STATE.masses;
+        let xs = STATE.xs;
+        return calculateCOM(xs,masses);
+    }
+
+    getNeighborsDict(STATE){
+        /*
+        Returns two dictionaries, neighborsDict and pinDict
+        neighborsDict example {0:[[1,distance01],[2,distance02]],1:[[0,distance01],[2,distance12]],2:[[0,distance02],[1,distance12]]}
+        pinDict example {0:[pin_point0,pin_distance0],1:[pin_point1,pin_distance1],2:[pin_point2,pin_distance2]}
+
+        */
+        let [neighborsDict,pinDict] = getNeighborsDict(STATE);
+        return [neighborsDict, pinDict];
+    }
+
+
+}
+    
+
 
 
 
@@ -23,171 +208,6 @@ if (DEBUG){
 GENERAL FUNCTIONALITIES
 */
 
-
-/*
-NON-CONTACT FORCES CLASSES, signature is simple, in the constructor we pass the particle indices and extra specific force parameters
-All classes should have a getForceArray method that returns a [nparticles,2] array with the forces acting on each particle
-The input to getForceArray should be the current positions, velocities and masses of the particles
-*/
-
-class ConstantForce{
-    constructor(particle_indices, force){
-        this.particle_indices = particle_indices;
-        this.force = force;
-    }
-    getForceArray(xarray, varray, masses){
-        if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
-        throw new Error("xarray, varray and masses should be arrays")
-        }
-        let nparticles = xarray.length;
-        let nforces = this.particle_indices.length;
-        let force_matrix= math.zeros(nparticles,2,"sparse");
-        for (let i = 0; i < nforces; i++){
-        let particle_index = this.particle_indices[i];
-        let force = this.force;
-        let force_x = force[0];
-        let force_y = force[1];
-        force_matrix.set([particle_index, 0], force_x);
-        force_matrix.set([particle_index, 1], force_y);
-        }
-        return force_matrix.toArray();
-    }
-    }
-
-class Gravity{
-    constructor(particle_indices,g = 9.8,direction = [0,-1]){
-        this.g = g;
-        this.particle_indices = particle_indices;
-        this.direction = direction;
-    }
-    getForceArray(xarray, varray, masses){
-        //lets throw error if xarray, varray and masses are not arrays
-        if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
-
-        throw new Error("xarray, varray and masses should be arrays")
-        }
-        let nparticles = xarray.length;
-        let nforces = this.particle_indices.length;
-        let force_matrix = math.zeros(nparticles,2,"sparse");
-        for (let i = 0; i < nforces; i++){
-        let particle_index = this.particle_indices[i];
-        let mass = masses[particle_index];
-        let force = this.g*mass;
-        let force_x = force * this.direction[0];
-        let force_y = force * this.direction[1];
-        force_matrix.set([particle_index, 0], force_x);
-        force_matrix.set([particle_index, 1], force_y);
-        }
-        return force_matrix.toArray();
-    }
-}
-
-
-class Damping{
-    constructor(particle_indices, damping_coefficient){
-        this.particle_indices = particle_indices;
-        this.damping_coefficient = damping_coefficient;
-    }
-    getForceArray(xarray, varray, masses){
-        if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
-        throw new Error("xarray, varray and masses should be arrays")
-        }
-            let nparticles = xarray.length;
-            let nforces = this.particle_indices.length;
-            let force_matrix = math.zeros(nparticles,2,"sparse");
-            for (let i = 0; i < nforces; i++){
-            let particle_index = this.particle_indices[i];
-            let damping_coefficient = this.damping_coefficient;
-            let velocity = varray[particle_index];
-            let force_x = -damping_coefficient*velocity[0];
-            let force_y = -damping_coefficient*velocity[1];
-            force_matrix.set([particle_index, 0], force_x);
-            force_matrix.set([particle_index, 1], force_y);
-        }
-        return force_matrix.toArray();
-    }
-}
-
-class Spring{
-    constructor(idx1,idx2, spring_constant, rest_length){
-        this.particle_indices = [idx1,idx2];
-        this.spring_constant = spring_constant;
-        this.rest_length = rest_length;
-    }
-    getForceArray(xarray, varray, masses){
-        if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
-        throw new Error("xarray, varray and masses should be arrays")
-        }
-        let nparticles = xarray.length;
-        let nforces = this.particle_indices.length;
-        let force_matrix = math.zeros(nparticles,2,"sparse");
-        let idx1 = this.particle_indices[0];
-        let idx2 = this.particle_indices[1];
-        let x1 = xarray[idx1];
-        let x2 = xarray[idx2];
-        let x1_x = x1[0];
-        let x1_y = x1[1];
-        let x2_x = x2[0];
-        let x2_y = x2[1];
-        let distance = Math.sqrt((x2_x-x1_x)**2 + (x2_y-x1_y)**2);
-        let force_magnitude = this.spring_constant*(distance-this.rest_length);
-        let force_x = force_magnitude*(x2_x-x1_x)/distance;
-        let force_y = force_magnitude*(x2_y-x1_y)/distance;
-        force_matrix.set([idx1, 0], force_x);
-        force_matrix.set([idx1, 1], force_y);
-        force_matrix.set([idx2, 0], -force_x);
-        force_matrix.set([idx2, 1], -force_y);
-        return force_matrix.toArray();
-    }
-}
-
-class Spring2Point{
-    //This spring acts between a target particle and a specified fixed point,this fixed point can be set with mouse coordinates later
-    constructor(idx1, fixed_point, spring_constant, rest_length){
-        this.particle_indices = [idx1];
-        this.spring_constant = spring_constant;
-        this.rest_length = rest_length;
-        this.fixed_point = fixed_point;
-    }
-    getForceArray(xarray, varray, masses){
-        if (!Array.isArray(xarray) || !Array.isArray(varray) || !Array.isArray(masses)){
-        throw new Error("xarray, varray and masses should be arrays")
-        }
-        let nparticles = xarray.length;
-        let nforces = this.particle_indices.length;
-        let force_matrix = math.zeros(nparticles,2,"sparse");
-        let idx1 = this.particle_indices[0];
-        let x1 = xarray[idx1];
-        let x1_x = x1[0];
-        let x1_y = x1[1];
-        let x2_x = this.fixed_point[0];
-        let x2_y = this.fixed_point[1];
-        let distance = Math.sqrt((x2_x-x1_x)**2 + (x2_y-x1_y)**2);
-        let force_magnitude = this.spring_constant*(distance-this.rest_length);
-        let force_x = force_magnitude*(x2_x-x1_x)/distance;
-        let force_y = force_magnitude*(x2_y-x1_y)/distance;
-        force_matrix.set([idx1, 0], force_x);
-        force_matrix.set([idx1, 1], force_y);
-        return force_matrix.toArray();
-    }
-}
-
-
-
-function computeExternalForces(forces,xarray,varray,masses){
-    /*
-    * forces is an array of force objects
-    * This returns a [nparticles,2] array with the external forces acting on each particle
-    */
-    let nparticles = xarray.length;
-    let external_forces = math.zeros(nparticles,2,"sparse");
-    for (let force of forces){
-      let ext_force = force.getForceArray(xarray, varray, masses);
-  
-      external_forces = math.add(external_forces, ext_force); 
-    }
-    return external_forces;
-  }
 
 
 
@@ -836,7 +856,7 @@ function stepUnpackState(STATE){
         forceObjs.push(new Gravity(nparticles_array, s.gravity[0], s.gravity[1]));
     }
     if (s.hasOwnProperty("damping")){
-        forceObjs = forceObjs.concat(s.damping.map(f => new Damping([f[0]], f[1])));
+        forceObjs = forceObjs.concat(s.damping.map(f => new Damping(f[0], f[1])));
     }
     if (s.hasOwnProperty("springs")){
         forceObjs = forceObjs.concat(s.springs.map(f => new Spring(f[0], f[1], f[2], f[3])));
@@ -844,6 +864,7 @@ function stepUnpackState(STATE){
     if (s.hasOwnProperty("springs2points")){
         forceObjs = forceObjs.concat(s.springs2points.map(f => new Spring2Point(f[0], f[1], f[2], f[3])));
     }
+
 
 
 
@@ -890,7 +911,7 @@ function stepSemiEuler(STATE, PARAMETERS){
     // 6. Integrate the system
     // 7. Update collisions
 
-    let mandatoryParameters = ["collisionThreshold", "muFriction", "alpha", "beta"];
+    let mandatoryParameters = ["dt","collisionThreshold", "muFriction", "alpha", "beta"];
     for (let key of mandatoryParameters){
         if (!PARAMETERS.hasOwnProperty(key)){
             throw new Error(`The PARAMETERS object must have the key ${key}`)
@@ -956,7 +977,7 @@ function stepSemiEuler(STATE, PARAMETERS){
 }
 
 
-function stepSemiEulerActiveSet(STATE,PARAMETERS){
+function stepSemiEulerActiveSet(STATE,PARAMETERS, callbacksActuators = null){
     //There is an issue that becomes apparent when particles in contact with a polygon detach from it, I think it stems in part from the handling of the inequality constraints
     // in the solver so far, we handle the inequality constraints by clipping the lagrange multipliers to be >= 0, the thing is, even if we prevent contact forces to be attractive
     // the rest of the constraint forces are calculated as if the contact force were a pin constraint, so we need to to do a following interation after clipping the lagrange multipliers
@@ -984,6 +1005,11 @@ function stepSemiEulerActiveSet(STATE,PARAMETERS){
     * some normal negative acceleration appear for some of the constraints that were previously removed
 
     */
+
+    //callbackActuator is a temporary solution
+    // to implement feedback control, all the callbacks will be called with the state object
+    // actuatorForce = callbackActuator(state) -> [nparticles,2]
+    // we just add this force to the external forces
     let mandatoryParameters = ["collisionThreshold", "muFriction", "alpha", "beta"];
     for (let key of mandatoryParameters){
         if (!PARAMETERS.hasOwnProperty(key)){
@@ -996,7 +1022,16 @@ function stepSemiEulerActiveSet(STATE,PARAMETERS){
     let originalCollisions = JSON.parse(JSON.stringify(STATE.collisions));
     let [constraintObjs, forceObjs, polygonsObjs] = stepUnpackState(STATE);
     let externalForces = computeExternalForces(forceObjs, s.xs, s.vs, s.masses);
+    let actuatorForces = math.zeros(s.xs.length,2);
+    if (callbacksActuators !== null){
+        for (let callbackActuator of callbacksActuators){
+            let actuatorForce = callbackActuator(STATE);
+            actuatorForces = math.add(actuatorForces, actuatorForce);
+            
+        }
 
+    }
+    externalForces = math.add(externalForces, actuatorForces);
     //collisions are an array of [iP,jE,Pidx] where iP is the particle index, jE is the edge index and Pidx is the polygon index
 
     function solveConstraintsAndFindInactive( STATE, PARAMETERS, externalForces){
@@ -1011,8 +1046,8 @@ function stepSemiEulerActiveSet(STATE,PARAMETERS){
         let lagrangeMultipliersContact = indicesConstraintsContact.map(i => outSolverConstraints.lagrange_multipliers[i]);
         let indicesNegative = lagrangeMultipliersContact.map((l,i) => [l,i]).filter(l => l[0] < 0).map(l => l[1]);
         //lets print the lagrange multipliers, and the indicesNegative
-        console.log("Lagrange multipliers contact", lagrangeMultipliersContact);
-        console.log("Indices negative", indicesNegative);
+        //console.log("Lagrange multipliers contact", lagrangeMultipliersContact);
+        //console.log("Indices negative", indicesNegative);
 
         return [outSolverConstraints, indicesNegative, J, dotJ];
     }
@@ -1026,7 +1061,7 @@ function stepSemiEulerActiveSet(STATE,PARAMETERS){
         }else{
             // we just update the state by removing the collision with the most negative lagrange multiplier
             let activeCollisions = s.collisions.filter((c,i) => !indicesNegative.includes(i));
-            console.log(`Removing collision ${indicesNegative[0]} with lagrange multiplier ${outSolverConstraints.lagrange_multipliers[indicesNegative[0]]}`);
+            //console.log(`Removing collision ${indicesNegative[0]} with lagrange multiplier ${outSolverConstraints.lagrange_multipliers[indicesNegative[0]]}`);
             STATE.collisions = activeCollisions;
         }
     }
@@ -1058,6 +1093,7 @@ function stepSemiEulerActiveSet(STATE,PARAMETERS){
         "external_forces": externalForces.toArray(),
         "constraint_forces": constraintForces,
         "contact_forces": contactForces,
+        "actuator_forces": actuatorForces.toArray(),
         "total_forces": totalForces,
         "lagrange_multipliers": outSolverConstraints.lagrange_multipliers,
         "lagrange_multipliers_contact": lagrangeMultipliersContact,
@@ -1784,11 +1820,45 @@ function rollingCircleAnalyticalSolution(nparticles, radius, g, omega, tArray){
 
 }
 
-function integrateSystem(STATE,PARAMETERS, nsteps, method = "SemiEulerActiveSet"){
+
+function _postProcessStateStory(stateStory){
+    //lets add the kinetic energy and the angle between the pin and the horizontal
+    let sUtils = new StateUtils();
+    let nsteps = stateStory.length;
+    for(let i = 0; i < nsteps; i++){
+        let state = stateStory[i];
+        state.kineticEnergy = sUtils.getKineticEnergy(state);
+        state.totalEnergy = sUtils.getTotalEnergy(state);
+        state.COM = sUtils.getCOM(state);
+        state.angleConstraintsPin = sUtils.getAngleBtwConstraintsPinHorizontal(state, "deg")[0];
+        state.angleConstraintsDistance = sUtils.getAngleBtwConstraintsDistanceHorizontal(state, "deg")[0];
+    }
+}   
+
+function integrateSystem(STATE, nsteps, callbacksActuators = null,
+                     method = "SemiEulerActiveSet",
+                        PARAMETERS = {})
+                        {
+    
+
+    let defaultParams = {
+        "alpha": 0.1,
+        "beta": 0.1,
+        "dt": 0.01,
+        "muFriction": 0.0,
+        "collisionThreshold": 0.01,
+    }
+
+    for (let key in defaultParams){
+        if (!PARAMETERS.hasOwnProperty(key)){
+            console.log(`PARAMETERS object does not have key ${key}, using default value ${defaultParams[key]}`);
+            PARAMETERS[key] = defaultParams[key];
+        }
+    }
+
     let s = STATE;
 
     let STATE_STORY = [s];
-
     for (let i = 0; i < nsteps; i++){
         //lets copy the state object, just in case
         let state = JSON.parse(JSON.stringify(s));
@@ -1797,9 +1867,9 @@ function integrateSystem(STATE,PARAMETERS, nsteps, method = "SemiEulerActiveSet"
             STATE_STORY.push(newState);
             s = newState;
         }//else if method  SemiEulerActiveSet
-
+        
         else if (method === "SemiEulerActiveSet"){
-            let newState = stepSemiEulerActiveSet(state,PARAMETERS);
+            let newState = stepSemiEulerActiveSet(state,PARAMETERS, callbacksActuators);
             STATE_STORY.push(newState);
             s = newState;
              }
@@ -1809,46 +1879,20 @@ function integrateSystem(STATE,PARAMETERS, nsteps, method = "SemiEulerActiveSet"
         }
     }
 
+    _postProcessStateStory(STATE_STORY);
     return STATE_STORY;
     }
 
 
-let referenceConfigurations = {
-    "pendulum": {
-        "thetaO": Math.PI/4,
-        "omegaO": 0,
-        "g": 9.8,
-        "L": 1,
-        "mass": 1,
-    },
-}
-function solveReferenceSystems(nameSystem,PARAMETERS,nsteps){
-    //panelPlotsId is the id of the div where the plots will be displayed
-    //we'll use plotly to create the plots, plotly will be loaded in the html
-    let config = referenceConfigurations[nameSystem];
-    let stateStory = [];
-    if (nameSystem === "pendulum"){
-       
-        
-        let initialState = pendulumSystemConfig(config.thetaO, config.omegaO, config.g, config.L, config.mass);
-        stateStory = integrateSystem(initialState, PARAMETERS, nsteps);
-
-
-    }
-
-    //lets return the stateStory
-
-    return stateStory;
-}
 
 
 export { stepSemiEuler,stepSemiEulerActiveSet, calculateCOM, calculateKineticEnergy,
-     solveReferenceSystems, pendulumSystemConfig, pendulumAnalyticalSolution,
+      pendulumSystemConfig, pendulumAnalyticalSolution,
         doublePendulumSystemConfig, integrateSystem, particleOnStairs,
          initState, chainSystemConfig,  tumblingBoxSystemConfig,tumblingBoxAnalyticalSolution,
             dumbellSlidingOnWallSystemConfig, dumbellSlidingOnWallAnalyticalSolution,
             rollingCircleSystemConfig, rollingCircleAnalyticalSolution, calculateInertiaMoment,
         computeJacobians, solveConstraints, stepUnpackState,
          collisions2ContactConstraints,computeExternalForces, calculateConstraintForces,
-         CollisionHandler, ConstraintContact, Polygon
+         CollisionHandler, ConstraintContact, Polygon, StateUtils, getConstraintsRigid,
         };
