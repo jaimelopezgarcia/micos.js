@@ -1,4 +1,4 @@
-import {getNeighborsDict} from "./math_utils.js";
+import {getNeighborsDict,getAngle} from "./math_utils.js";
 
 /*
 All forces has the signature method getForceArray(xarray, varray, masses)
@@ -195,6 +195,44 @@ ACTUATORS
 /////////
 
 
+class ForceActuator{
+    //just a external force that can be applied to selected particles
+    constructor(particle_ids, force){
+        this.particle_ids = particle_ids;
+        this.force = force;//[2] array
+        
+    }
+    getName(){
+        return "ForceActuator";
+    }
+    getForceArray(STATE){
+
+        // forceArray must be a [nparticles,2] array
+        //so we initialize it with zeros
+        let forceArray = math.zeros([STATE.xs.length,2]);
+
+        for(let i = 0; i < this.particle_ids.length; i++){
+            let particle_id = this.particle_ids[i];
+            forceArray[particle_id] = this.force;
+            
+            
+
+        }
+        console.log
+        return forceArray
+        
+
+    }
+}
+
+
+
+
+
+
+
+
+
 //lets create a linear actuator, basically a spring that changes its rest length
 
 
@@ -273,6 +311,9 @@ function calculateTorqueLeastNormedForce(pivotPoint, applicationPoint, torqueVal
     // because it is a 2D problem we can use for the torque vector [0,0,torqueValue]
     //and we pick the force vector [fx,fy,0]
 
+    //returns the force vector [fx,fy] that generates the torqueValue at the
+    // applicationPoint respect to the pivotPoint
+
     let torqueVec = [0,0,torqueValue];
     let rVec = math.subtract(applicationPoint, pivotPoint);
     let normR = math.norm(rVec);
@@ -290,7 +331,7 @@ class TorqueActuatorPin{
     /*
 Example usage:
 let torqueFun = (theta, omega, time) => torqueFunction(theta, omega, time, 0.0, 50, 0.5);
-let actuator = new TorqueActuatorPin([0,0], 0, torqueFun);
+let actuator = new TorqueActuatorPin([0,0], 0, torqueFun); pinpoint targetParticletorqueFunction
 let callbacksActuators = [actuator.getForceArray.bind(actuator)];
 
     */
@@ -400,6 +441,101 @@ class TorqueActuatorJoint{
     }
 
 }
+
+
+// lets make an elbow joint actuator to implement a more physical torque actuator
+//this will only apply on particles/joints that have atleast 2 neighbors
+// we'll make sure that net angular momentum  and linear momentum is conserved
+// for this we impart opposing torques on the particle neighbors, and we apply an additional force on the joint so F_joint+ F_neighbor1 + F_neighbor2 = 0
+//we'll throw an error if the targeted particle to act as a joint has other than 2 neighbors.
+
+class TorqueActuatorElbowJoint{
+
+    constructor(jointParticleIdx, targetParticleIdx, torqueFunction){
+        this.jointParticleIdx = jointParticleIdx;
+        this.torqueFunction = torqueFunction;
+        this.firstCall = true;// on the first getForceArray call we assert that joint particle has 2 neighbors
+        //we'll impart a positive torque on the targetParticleIdx and negative torque on the other neighbors
+        this.targetParticleIdx = targetParticleIdx;
+
+        
+        this._checkTorqueFunction(torqueFunction);
+    }
+
+    getName(){
+        return `TorqueActuatorElbowJoint_${this.jointParticleIdx}`;
+    }
+
+    _checkTorqueFunction(torqueFunction){
+        // basic check to see the torqueFunction has the right signature and gives a number
+        let [theta, omega, time] = [0,0,0];
+        let torque = torqueFunction(theta, omega, time);
+        if(typeof torque != "number"){
+            throw "The torque function must return a number";
+        }
+    }
+
+    _checkNeighbors(STATE){
+        if (this.firstCall){
+                let [neighborsDict, pinDict] = getNeighborsDict(STATE);
+                this.neighborsDict = neighborsDict;
+                this.pinDict = pinDict;
+                this.firstCall = false;
+
+                //lets check that the joint particle has 2 neighbors and the target particle is one of them
+                let neighborsJoint = this.neighborsDict[this.jointParticleIdx];
+                //lets throw an error if joint particle has other than 2 neighbors
+                if(neighborsJoint.length != 2){
+                    throw `The joint particle ${this.jointParticleIdx} has other than 2 neighbors, neighbors are ${neighborsJoint}`;
+                }
+                //lets throw an error if target particles is not in neighborsJoint
+                let targetParticleInNeighbors = neighborsJoint.some(([idx, _]) => idx == this.targetParticleIdx);
+
+                if(!targetParticleInNeighbors){
+                    throw `The target particle ${this.targetParticleIdx} is not a neighbor of the joint particle ${this.jointParticleIdx}, neighbors are ${neighborsJoint}`;
+                }
+
+
+    
+                }
+             }
+
+    getForceArray(STATE, returnTorque = false){
+        this._checkNeighbors(STATE);
+        let [xarray,varray,time] = [STATE.xs, STATE.vs, STATE.time];
+        let neighborsJoint = this.neighborsDict[this.jointParticleIdx];
+        let [idx1, idx2] = neighborsJoint.map(([idx, _]) => idx);
+        let [idxTarget, idxOther] = neighborsJoint.find(([idx, _]) => idx == this.targetParticleIdx) ? [this.targetParticleIdx, idxOther] : [idxOther, this.targetParticleIdx];
+        let pivotXs = xarray[this.jointParticleIdx];
+        let torqueActuatorTarget = new TorqueActuatorPin(pivotXs, idxTarget, this.torqueFunction);
+        //on the other neighbor we apply the opposite torque
+        let [forceArrayTarget,torqueTarget] = torqueActuatorTarget.getForceArray(STATE,true);
+        //lets create a torqueActuator for the other neighbor with a custom torque function that gives -torqueTarget
+        let torqueFunctionOther = (theta, omega, time) => -torqueTarget;
+        let torqueActuatorOther = new TorqueActuatorPin(pivotXs, idxOther, torqueFunctionOther);
+        let [forceArrayOther,torqueOther] = torqueActuatorOther.getForceArray(STATE,true);
+        let forceArrayJoint = math.multiply(-1, math.add(forceArrayTarget, forceArrayOther));
+        let forceArray = math.add(forceArrayJoint, math.add(forceArrayTarget, forceArrayOther));
+        if(returnTorque){
+            return [forceArray, torqueTarget];
+        }
+        return forceArray;
+    }
+
+    getTorque(STATE){
+        return this.getForceArray(STATE, true)[1];
+    }
+
+}
+
+
+
+
+
+
+
+
+
 export {ConstantForce,Gravity,Damping,Spring,Spring2Point,computeExternalForces, calculateTorqueLeastNormedForce,
-    TorqueActuatorPin, TorqueActuatorJoint, SpringActuator
+    TorqueActuatorPin, TorqueActuatorJoint, SpringActuator, ForceActuator, TorqueActuatorElbowJoint
 }

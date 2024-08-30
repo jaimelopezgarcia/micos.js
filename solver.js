@@ -84,7 +84,7 @@ class StateUtils{
         return getAngle([dr12],[dr34])[0];
     }
 
-    getAngleBtwConstraints(STATE, idxC1, idxC2){
+    getAngleBtwConstraints(STATE, idxC1, idxC2, unit = "rad"){
         //constraints_distance is a [[idx1,idx2,distance],...] 
         let constraints = this.getConstraintsObjs(STATE);
         let cs = [constraints[idxC1],constraints[idxC2]];
@@ -99,14 +99,14 @@ class StateUtils{
             if (c.getType() === "distance"){
                 let idx1 = c.getParticleIndices()[0];
                 let idx2 = c.getParticleIndices()[1];
-                let angle = this.getAngleBtwParticlesHorizontal(STATE,idx1,idx2);
+                let angle = this.getAngleBtwParticlesHorizontal(STATE,idx1,idx2,unit);
                 anglesHorizontal.push(angle);
             }
             else if (c.getType() === "pin"){
                 let idx = c.getParticleIndices()[0];
                 let point = xs[idx];
                 let pin_point = c[1]
-                let angle = getAngle([math.subtract(point,pin_point)],[1,0])[0];
+                let angle = getAngle([math.subtract(point,pin_point)],[1,0],unit)[0];
                 anglesHorizontal.push(angle);
             }
             else{
@@ -140,6 +140,7 @@ class StateUtils{
     getAngleBtwConstraintsPinHorizontal(STATE,unit = "rad"){
         //constraints_pin is a [[idx,pin_point,pin_distance],...] array, so we loop over it and get 
         //the angle between r_{idx,pin_point} and the horizontal axis
+        // returns a [nConstraintsPin] array with the angles
         let constraints = this.getConstraintsObjs(STATE);
         let xs = STATE.xs;
         let angles = [];
@@ -155,6 +156,68 @@ class StateUtils{
          
         return angles;
     }
+
+    getAngleSegmentsHorizontal(STATE,unit ="rad"){
+        //basically any pin or distance constraint constitutes a segment
+        // lets refer to the segments with the same index as the constraint
+        // constraints are [distance,pin,contact]
+        // so we'll have the same segments as [distance,pin]
+        //this function will return an array of angles between the segments and the horizontal axis
+        let anglesDistance = this.getAngleBtwConstraintsDistanceHorizontal(STATE,unit);
+        let anglesPin = this.getAngleBtwConstraintsPinHorizontal(STATE,unit);
+        return anglesDistance.concat(anglesPin);
+    }
+    getDotAngleSegments(STATE,unit ="rad"){
+        // here we'll return the omega for each segment
+        // we dont refer to them as Horizontal because the omega is a time derivative that
+        // doesnt depend on the reference theta0
+        // so basically for a segment omega = \vec{v__{rel12}}\vec{\theta}/R_{12} where R_{12} is the distance between the particles
+        // and \vec{v__{rel12}} is the relative velocity between the particles
+        //and \vec{\theta} is the unit vector perpendicular to the segment
+        // so we'll return an array of nsegments with the omega for each segment
+        //\vec{\theta} = [-dry,drx]/norm([-dry,drx]) = [-dr12[1],dr12[0]]/norm(dr12)
+
+        //lets get the [distance,pin] constraints from the state constraints list
+        //we filter by getType (distance,pin)
+        //we then get the particle indices and calculate the relative velocity
+        // we then calculate the omega for each segment
+        let constraints = this.getConstraintsObjs(STATE).filter((c) => c.getType() === "distance" || c.getType() === "pin");
+        let omegas = [];
+
+        for (let c of constraints){
+            if (c.getType() === "distance"){
+                let idx1 = c.getParticleIndices()[0];
+                let idx2 = c.getParticleIndices()[1];
+                let dr = math.subtract(STATE.xs[idx2],STATE.xs[idx1]);
+                let dr_norm = math.norm(dr);
+                let vrel = math.subtract(STATE.vs[idx2],STATE.vs[idx1]);
+                let omega = math.dot(vrel,[-dr[1],dr[0]])/dr_norm;
+                omegas.push(omega);
+            }
+            else if (c.getType() === "pin"){
+                let idx = c.getParticleIndices()[0];
+                let dr = math.subtract(STATE.xs[idx],c.getPinPoint());
+                let dr_norm = math.norm(dr);
+                let vrel = STATE.vs[idx];
+                let omega = math.dot(vrel,[-dr[1],dr[0]])/dr_norm;
+                omegas.push(omega);
+            }
+            else{
+                throw new Error(`Constraint type ${c.getType()} not pin nor distance, but ${c.getType()}`);
+            }
+
+        }
+
+        if (unit === "deg"){
+            omegas = omegas.map((omega) => math.unit(omega,"rad").toNumber("deg"));
+        }
+
+
+
+        return omegas;
+
+        }
+   
 
     getKineticEnergy(STATE){
         let masses = STATE.masses;
@@ -1307,7 +1370,24 @@ function pendulumAnalyticalSolution(thetaO, g, L, tarray){
         xs.push([x,y]);
         vs.push([vx,vy]);
     }
-    return [xs,vs];
+    //lets return the analytical solution as a stateStory array of state objects
+    let stateStory = [];
+
+    for (let i = 0; i < tarray.length; i++){
+        let state = {
+            xs: [xs[i]],
+            vs: [vs[i]],
+            masses: [1],
+            constraints_distance: [],
+            constraints_pin: [[0, [0,0], L]],
+            gravity: [g, [0,-1]],
+            time: tarray[i],
+            polygons: [],
+        }
+        stateStory.push(state);
+    }
+
+    return stateStory;
 }
 
 function doublePendulumSystemConfig(thetaO1, omegaO1, thetaO2, omegaO2, g, L1, L2, mass1, mass2){
@@ -1842,8 +1922,8 @@ function integrateSystem(STATE, nsteps, callbacksActuators = null,
     
 
     let defaultParams = {
-        "alpha": 0.1,
-        "beta": 0.1,
+        "alpha": 5,
+        "beta": 5,
         "dt": 0.01,
         "muFriction": 0.0,
         "collisionThreshold": 0.01,
@@ -1856,7 +1936,7 @@ function integrateSystem(STATE, nsteps, callbacksActuators = null,
         }
     }
 
-    let s = STATE;
+    let s = initState(STATE, PARAMETERS);
 
     let STATE_STORY = [s];
     for (let i = 0; i < nsteps; i++){

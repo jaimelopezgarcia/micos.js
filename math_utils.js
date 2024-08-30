@@ -215,6 +215,18 @@ function calculateKineticEnergy(vsArray,masses){
 
 
 function getNeighborsDict(STATE){
+    /*
+    Example return:
+    neighborsDict = {
+        0: [[1, 1.0], [2, 1.0], [3, 1.0]],
+        1: [[0, 1.0], [2, 1.0], [3, 1.0]],
+        2: [[0, 1.0], [1, 1.0], [3, 1.0]],
+}
+    pinDict = {
+        0: [[0, 0], 1.0],
+    }
+
+    */
     let constraintsDistance = STATE.constraints_distance;
     let constraintsPin = STATE.constraints_pin;
     let neighborsDict = {};
