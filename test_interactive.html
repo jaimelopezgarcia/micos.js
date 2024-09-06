@@ -122,7 +122,7 @@
     // collisions is an array of type [[iP,jE,polygonObj],...]-->[collisions,new_collisions,resolved_collisions]
     // collisions is the updated array of collisions, new and resolver are returned for debugging and visualization
         const SVG = document.getElementById("svgMain");
-        let MOUSE_SPRING_STIFFNESS = 5;
+        let MOUSE_SPRING_STIFFNESS = 35;
         let MOUSE_SPRING_RESTLENGTH = 0.1;
         let STATE_STORY = [];
         let EDIT_MODE = false;
@@ -244,6 +244,61 @@
         };
 
         return [STATE, callbacksActuators];
+    }
+
+
+    function spiderState(legLength){
+
+        //a simple spider like state, a big mass in the head, and 2 legs comprised of 2 segments each
+        // pin constraints at the feet so   the masses are feet->knee->head->knee->feet
+
+        //at an initial angle of 60º
+
+        let feetL = [0,0];
+        let gradRad = 60*Math.PI/180;
+        let kneeL = math.add(feetL,math.multiply(legLength, [Math.cos(gradRad), Math.sin(gradRad)]));
+        let head = math.add(kneeL,math.multiply(legLength, [Math.cos(-gradRad), Math.sin(-gradRad)]));
+
+        let kneeR = math.add(head, math.multiply(legLength, [Math.cos(gradRad), Math.sin(gradRad)]));
+        let feetR = math.add(kneeR, math.multiply(legLength, [Math.cos(-gradRad), Math.sin(-gradRad)]));
+
+        let xs = [kneeL,head,kneeR];
+        //lets translate xs to the left
+        xs = translate(xs,[-0.7,0]);
+        feetL = math.add(feetL,[-0.7,0]);
+        feetR = math.add(feetR,[-0.7,0]);
+
+        let masses = [1,8,1];
+        let constraints_distance = [
+                                    [0,1,legLength],
+                                    [1,2,legLength],
+                                    ];
+
+        let dampingCoef = 0.1;
+
+        let ground = [[-4,-1],[-4,-0.5],[4,-0.5],[4,-1]];
+
+        let polygons = [ground];
+
+        let STATE = {
+            "xs": xs,
+            "vs": xs.map((x) => {return [0,0]}),
+            "masses": masses,
+            "constraints_distance": constraints_distance,
+            "constraints_pin": [[0,feetL,legLength],[2,feetR,legLength]],
+            "polygons": polygons,
+            "t":0,
+            "gravity": [0.1,[0,-1]],
+            "springs": [],//particle1, particle2, stiffness, restLength
+            "damping": xs.map((x,i) => [[i],dampingCoef]),
+
+        };
+
+        return STATE;
+
+
+
+
     }
 
 
@@ -568,6 +623,7 @@
             // we iter over the springs2points, looking for an array with 5 elements, the last one being a mouseSpring tag
             // if we find it we update the spring to the mouse position
             // if we don't find it we create a new spring
+            //
             let spring = STATE.springs2points.find((spring) => {
                 return spring.length == 5 && spring[4] == "mouseSpring";
             });
@@ -673,7 +729,7 @@
 
 
         
-        let OPTIONS = ["Compass Walker", "Simple Quadruped"];
+        let OPTIONS = ["Compass Walker", "Simple Quadruped","Spider"];
         let SELECT = document.getElementById("modelSelect");
         OPTIONS.forEach((option) => {
             let opt = document.createElement("option");
@@ -692,6 +748,10 @@
             }else if (selected == "Simple Quadruped"){
                 [STATE, callbacksActuators] = simpleQuadruped(1,0.5);
             }
+            else if (selected == "Spider"){
+                STATE = spiderState(0.6);
+            }
+
             drawer.remove();
           //  _updateState(STATE);
             drawer.drawState(STATE);

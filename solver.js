@@ -1964,6 +1964,34 @@ function integrateSystem(STATE, nsteps, callbacksActuators = null,
     }
 
 
+function step(STATE, PARAMETERS = {}, callbacksActuators = null){
+
+    //updates the state object with the new state after a time step
+
+
+    let defaultParams = {
+        "alpha": 5,
+        "beta": 5,
+        "dt": 0.01,
+        "muFriction": 0.0,
+        "collisionThreshold": 0.01,
+    }
+
+    for (let key in defaultParams){
+        if (!PARAMETERS.hasOwnProperty(key)){
+            console.log(`PARAMETERS object does not have key ${key}, using default value ${defaultParams[key]}`);
+            PARAMETERS[key] = defaultParams[key];
+        }
+    }
+
+    let newState = stepSemiEulerActiveSet(state,PARAMETERS, callbacksActuators);
+
+    return newState;
+
+
+}
+
+
 
 
 export { stepSemiEuler,stepSemiEulerActiveSet, calculateCOM, calculateKineticEnergy,
@@ -1975,4 +2003,5 @@ export { stepSemiEuler,stepSemiEulerActiveSet, calculateCOM, calculateKineticEne
         computeJacobians, solveConstraints, stepUnpackState,
          collisions2ContactConstraints,computeExternalForces, calculateConstraintForces,
          CollisionHandler, ConstraintContact, Polygon, StateUtils, getConstraintsRigid,
+         step
         };

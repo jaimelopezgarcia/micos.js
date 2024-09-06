@@ -15,10 +15,7 @@
     * overflow
     */
 
-    body{
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-    }
+
 
     .main_canvas{
 
@@ -118,6 +115,29 @@
         plots_panel.id = `plots_panel_${nameSystem}`;
      }
 
+     //lets create a function to encapsulate the part of drawing which is common to all systems
+
+     function _drawAndSetSlider(nameSystem, stateStorySim, stateStoryAnalytical, drawerSim, drawerAnalytical, VISUAL_OPTIONS_SIM, VISUAL_OPTIONS_AN){
+        let svg = document.getElementById(`${nameSystem}_svg`);
+        let slider = document.getElementById(`slider_${nameSystem}`);
+        let plots_panel = document.getElementById(`plots_panel_${nameSystem}`);
+
+        let particlesGroupSIMId = `${nameSystem}_particles_SIM`;
+        let particlesGroupAnalyticalId = `${nameSystem}_particles_Analytical`;
+
+        drawerSim.drawState(stateStorySim[0], particlesGroupSIMId, "", VISUAL_OPTIONS_SIM,"","constraintsPendulumSim");
+        drawerAnalytical.drawState(stateStoryAnalytical[0], particlesGroupAnalyticalId, "", VISUAL_OPTIONS_AN,"","constraintsPendulumAn");
+
+        slider.addEventListener("input", function(){
+            let index = parseInt(slider.value);
+            drawerSim.drawState(stateStorySim[index], particlesGroupSIMId, "", VISUAL_OPTIONS_SIM,"","constraintsPendulumSim");
+            drawerAnalytical.drawState(stateStoryAnalytical[index], particlesGroupAnalyticalId, "", VISUAL_OPTIONS_AN,"","constraintsPendulumAn");
+        });
+
+        }
+
+
+
      function mainPendulum(configParams,PARAMETERS = {}){
         let nameSystem = "pendulum";
         createSystemPanel(nameSystem);
@@ -139,23 +159,132 @@
         VISUAL_OPTIONS_AN.particle_density = 0.02;
         VISUAL_OPTIONS_AN.color_particles = "green";
 
-        drawerSim.drawState(stateStorySim[0], pendulumParticlesGroupSIMId, "", VISUAL_OPTIONS_SIM,"","constraintsPendulumSim");
-        drawerAnalytical.drawState(stateStoryAnalytical[0], pendulumParticlesGroupAnalyticalId, "", VISUAL_OPTIONS_AN,"","constraintsPendulumAn");
-
-        slider.addEventListener("input", function(){
-            let index = parseInt(slider.value);
-            drawerSim.drawState(stateStorySim[index], pendulumParticlesGroupSIMId, "", VISUAL_OPTIONS_SIM,"","constraintsPendulumSim");
-            drawerAnalytical.drawState(stateStoryAnalytical[index], pendulumParticlesGroupAnalyticalId, "", VISUAL_OPTIONS_AN,"","constraintsPendulumAn");
-        });
+        _drawAndSetSlider(nameSystem, stateStorySim, stateStoryAnalytical, drawerSim, drawerAnalytical, VISUAL_OPTIONS_SIM, VISUAL_OPTIONS_AN);
         
 
         
      }
 
+    function mainTumblingBox(configParams,PARAMETERS = {}){
+        let nameSystem = "tumblingBox";
+        createSystemPanel(nameSystem);
+        let svg = document.getElementById(`tumblingBox_svg`);
+        let slider = document.getElementById(`slider_${nameSystem}`);
+        let plots_panel = document.getElementById(`plots_panel_${nameSystem}`);
+
+        let stateConfig = tumblingBoxSystemConfig( configParams.side, configParams.g, configParams.Lwedge, configParams.angle);
+
+        let stateStorySim = integrateSystem(stateConfig, 700, null, "SemiEulerActiveSet", PARAMETERS);
+        let tarray = stateStorySim.map((state)=>state.time);
+
+        let tumblingBoxStateStoryAnalytical = tumblingBoxAnalyticalSolution(configParams.side, configParams.g, configParams.angle, tarray);
+
+
+
+
+        let drawerSim = new Drawer(svg);
+        let drawerAnalytical = new Drawer(svg);
+
+        let tumblingBoxParticlesGroupSIMId = "tumblingBox_particles_SIM"
+        let tumblingBoxParticlesGroupAnalyticalId = "tumblingBox_particles_Analytical"
+
+        let VISUAL_OPTIONS_SIM = {"particle_density":0.01, "scale_arrows_force":0.1};
+        let VISUAL_OPTIONS_AN = JSON.parse(JSON.stringify(VISUAL_OPTIONS_SIM));
+
+        VISUAL_OPTIONS_AN.particle_density = 0.02;
+        VISUAL_OPTIONS_AN.color_particles = "green";
+
+        _drawAndSetSlider(nameSystem, stateStorySim, tumblingBoxStateStoryAnalytical, drawerSim, drawerAnalytical, VISUAL_OPTIONS_SIM, VISUAL_OPTIONS_AN);
+    }
+
+    function mainDumbellSliding(configParams, PARAMETERS = {}){
+        let nameSystem = "dumbellSliding";
+        createSystemPanel(nameSystem);
+        let svg = document.getElementById(`dumbellSliding_svg`);
+        let slider = document.getElementById(`slider_${nameSystem}`);
+        let plots_panel = document.getElementById(`plots_panel_${nameSystem}`);
+
+        let [L,mass,angle,g] = [configParams.L, configParams.mass, configParams.angle, configParams.g];
+        let stateConfig = dumbellSlidingOnWallSystemConfig(L,mass,mass,angle,g);
+
+        let stateStorySim = integrateSystem(stateConfig, 700, null, "SemiEulerActiveSet", PARAMETERS);
+        let tarray = stateStorySim.map((state)=>state.time);
+
+        let dumbellSlidingStateStoryAnalytical = dumbellSlidingOnWallAnalyticalSolution(L,mass,angle,g,tarray);
+
+        let drawerSim = new Drawer(svg);
+        let drawerAnalytical = new Drawer(svg);
+
+
+        let dumbellSlidingParticlesGroupSIMId = "dumbellSliding_particles_SIM"
+        let dumbellSlidingParticlesGroupAnalyticalId = "dumbellSliding_particles_Analytical"
+
+        let VISUAL_OPTIONS_SIM = {"particle_density":0.01, "scale_arrows_force":0.1};
+        let VISUAL_OPTIONS_AN = JSON.parse(JSON.stringify(VISUAL_OPTIONS_SIM));
+
+        VISUAL_OPTIONS_AN.particle_density = 0.02;
+        VISUAL_OPTIONS_AN.color_particles = "green";
+
+        _drawAndSetSlider(nameSystem, stateStorySim, dumbellSlidingStateStoryAnalytical, drawerSim, drawerAnalytical, VISUAL_OPTIONS_SIM, VISUAL_OPTIONS_AN);
+
+    }
+
+
+    function mainRollingCircle(configParams, PARAMETERS = {}){
+        let nameSystem = "rollingCircle";
+        createSystemPanel(nameSystem);
+        let svg = document.getElementById(`rollingCircle_svg`);
+        let slider = document.getElementById(`slider_${nameSystem}`);
+        let plots_panel = document.getElementById(`plots_panel_${nameSystem}`);
+
+        let [nparticles, radius, g, omega] = [configParams.nparticles, configParams.radius, configParams.g, configParams.omega];
+        let stateConfig = rollingCircleSystemConfig(nparticles, radius, g, omega);
+
+        let stateStorySim = integrateSystem(stateConfig, 700, null, "SemiEulerActiveSet", PARAMETERS);
+        let tarray = stateStorySim.map((state)=>state.time);
+
+        let rollingCircleStateStoryAnalytical = rollingCircleAnalyticalSolution(nparticles, radius, g, omega, tarray);
+
+        let drawerSim = new Drawer(svg,[-2,2],[-2,2]);
+        let drawerAnalytical = new Drawer(svg,[-2,2],[-2,2]);
+
+
+        let rollingCircleParticlesGroupSIMId = "rollingCircle_particles_SIM"
+        let rollingCircleParticlesGroupAnalyticalId = "rollingCircle_particles_Analytical"
+
+        let VISUAL_OPTIONS_SIM = {"particle_density":0.01, "scale_arrows_force":0.1};
+        let VISUAL_OPTIONS_AN = JSON.parse(JSON.stringify(VISUAL_OPTIONS_SIM));
+
+        VISUAL_OPTIONS_AN.particle_density = 0.02;
+        VISUAL_OPTIONS_AN.color_particles = "green";
+
+        _drawAndSetSlider(nameSystem, stateStorySim, rollingCircleStateStoryAnalytical, drawerSim, drawerAnalytical, VISUAL_OPTIONS_SIM, VISUAL_OPTIONS_AN);
+
+    }
+
+
+    
     window.onload = function(){
         let configParams = {"thetaO": 0.2, "g": 9.8, "L": 1.0};
         let PARAMETERS = {"alpha": 5, "beta": 5, "dt": 0.01, "muFriction": 0.0, "collisionThreshold": 0.01};
         mainPendulum(configParams, PARAMETERS);
+
+        let configParamsTumblingBox = {"side": 0.4, "g": 0.1, "Lwedge": 2, "angle": 49};
+        PARAMETERS = {"dt": 0.01, "alpha":15,"beta":15  , "collisionThreshold":0.001,"muFriction":2};
+        mainTumblingBox(configParamsTumblingBox, PARAMETERS);
+
+        let configParamsDumbellSliding = {"L": 0.4, "mass": 1, "angle": 49, "g": 0.1};
+        PARAMETERS = {"dt": 0.01, "alpha":5,"beta":5  , "collisionThreshold":0.001,"muFriction":0.0}
+
+        mainDumbellSliding(configParamsDumbellSliding, PARAMETERS);
+
+
+        let configParamsRollingCircle = {"nparticles": 12, "radius": 1, "g": 0.1, "omega": 0.3};
+        PARAMETERS = {"dt": 0.005, "alpha":15,"beta":15  , "collisionThreshold":0.001,"muFriction":0.1};
+
+        mainRollingCircle(configParamsRollingCircle, PARAMETERS);
+
+
     }
     </script>
 </body>

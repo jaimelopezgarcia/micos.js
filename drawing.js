@@ -801,8 +801,9 @@ function drawForces(STATE, svg, scaleArrows = 1.0){
       let distances1 = constraints_distance.map(constraint => constraint[2]);
       let constraints_idxs1 = constraints_distance.map(constraint => [constraint[0], constraint[1]]);
       //lets create labels, with the segment indices is basically an 0--nDistanceConstraints-1 array
-      let labels_segments = Array.from(Array(constraints_idxs1.length).keys()).map(i => `Seg${i}`);
-      drawDistanceConstraints(svg, xs, constraints_idxs1, distances1, constraintsGroupId, "black", labels_segments);
+      let labels_segments = Array.from(Array(constraints_idxs1.length).keys()).map(i => `Segd${i}`);
+      let constraintsDistId = constraintsGroupId + "_distance";
+      drawDistanceConstraints(svg, xs, constraints_idxs1, distances1, constraintsDistId, "black", labels_segments);
     }
     if (!isConsPinEmpty){
       let constraints_pin = STATE.constraints_pin;
@@ -810,8 +811,9 @@ function drawForces(STATE, svg, scaleArrows = 1.0){
       let pinpoints = constraints_pin.map(constraint => constraint[1]);
       let distances2 = constraints_pin.map(constraint => constraint[2]);
       //now the labels go form nDistanceConstraints to nDistanceConstraints + nPinConstraints - 1
-      let labels_segments = Array.from(Array(constraints_idxs2.length).keys()).map(i => `Seg${i}`);
-      drawPinConstraints(svg, xs, constraints_idxs2, pinpoints, distances2, constraintsGroupId, "black", labels_segments);
+      let labels_segments = Array.from(Array(constraints_idxs2.length).keys()).map(i => `Segp${i}`);
+      let constraintsPinId = constraintsGroupId + "_pin";
+      drawPinConstraints(svg, xs, constraints_idxs2, pinpoints, distances2, constraintsPinId, "black", labels_segments);
     }
     
 }
@@ -1774,7 +1776,7 @@ class Drawer{
 
       remove(){
         //lets remove all the groups in the svg
-        let groups = [this.particlesGroupId, this.polygonsGroupId, this.springsGroupId, this.constraintsGroupId];
+        let groups = [this.particlesGroupId, this.polygonsGroupId, this.springsGroupId, this.constraintsGroupId+"_distance", this.constraintsGroupId+"_pin"];
 
         for (let group of groups){
           let groupElmnt = document.getElementById(group);
