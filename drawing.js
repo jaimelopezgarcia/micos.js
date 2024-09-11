@@ -1,4 +1,5 @@
 import {Polygon} from "./solver.js";
+import {getSvgRelativeCoords} from "./utils.js";
 
 
 const DEBUG = true;
@@ -678,7 +679,7 @@ function drawPinConstraints(svg, xarray, constraints_idxs,
       if (this.svg === null) {
         //lets get the x and y domain with extent
         if (DEBUG){
-          console.log("Plotting for the first time, creating axis for div_id", this.div_id)
+          console.debug("Plotting for the first time, creating axis for div_id", this.div_id)
         }
         let xdomain = d3.extent(xarray);
         let ydomain = d3.extent(yarray);
@@ -690,7 +691,7 @@ function drawPinConstraints(svg, xarray, constraints_idxs,
         color = this.colors[this.counter];
         this.counter = (this.counter + 1) % this.colors.length;
         if (DEBUG){
-          console.log("Color not provided, using color", color)
+          console.debug("Color not provided, using color", color)
         }
       }
 
@@ -1352,6 +1353,102 @@ class CollisionDrawer{
 
 
 
+function particleInteractionMouse(SVG, particle_id, canvas2Model, mouseMoveCallbacks = [], mouseUpCallbacks = []){
+  //this function is intended to execute the provided callbacks when the particle is clicked
+  // all mouseMoveCalbacks must have the signature callback(mouseCoordsModel, particle_idx)
+  // all mouseUpCallbacks must have the signature callback()
+  // with mouseup we remove the mousemove and mouseup event listeners
+  let particle = document.getElementById(particle_id);
+  //lets throw an error if the particle is not found
+  if (particle === null){
+      throw new Error("Particle not found with id " + particle_id);
+  }
+  //lets retrieve the particle_idx ( it must be the last string after _ in the id)
+  let split_id = particle_id.split("_");
+  //parseInt
+  let particle_idx = parseInt(split_id[split_id.length-1]);
+  //if not a number, throw an error
+  if (isNaN(particle_idx)){
+      throw new Error("Particle id must end with a number");
+  }
+  particle.addEventListener("mousedown", function(event){
+      event.preventDefault();
+
+      function mouseMoveCallback(event){
+          
+
+          let [xabs, yabs] = [event.clientX, event.clientY];
+          SVG.lastClientX = xabs;
+          SVG.lastClientY = yabs; //super sloppy fix to manually update mousemove event
+          let [xsvg, ysvg] = getSvgRelativeCoords(SVG, xabs, yabs);
+          let [xnewCanvas, ynewCanvas] =[xsvg, ysvg]
+          let [xnewModel, ynewModel] = canvas2Model([[xnewCanvas, ynewCanvas]])[0];
+          let mouseCoordsModel = [xnewModel, ynewModel];
+          for (let callback of mouseMoveCallbacks){
+              callback(mouseCoordsModel, particle_idx);
+          }
+      }
+      function mouseUpCallback(event){
+          SVG.removeEventListener("mousemove", mouseMoveCallback);
+          SVG.removeEventListener("mouseup", mouseUpCallback);
+
+          for (let callback of mouseUpCallbacks){
+              callback();
+          }
+      }
+
+      SVG.addEventListener("mousemove", mouseMoveCallback);
+      SVG.addEventListener("mouseup", mouseUpCallback);
+
+  })
+
+}
+     
+
+
+
+function _mouseUpSpringCallback(drawer,STATE){
+  STATE.springs2points = STATE.springs2points.filter((spring) => {
+      return spring.length != 5 || spring[4] != "mouseSpring";
+  });
+
+  drawer.removeSpringMouse();
+}
+
+
+function _mouseMoveSpringCallback(drawer,STATE,mouseSpringRestLength,
+  mouseSpringStiffness,
+  mouseCoords, particle_idx){
+  //we attach a mouseSpring text tag to the last entry of springs2points so we can identify it for update and removal
+  // we iter over the springs2points, looking for an array with 5 elements, the last one being a mouseSpring tag
+  // if we find it we update the spring to the mouse position
+  // if we don't find it we create a new spring
+  //
+
+
+
+
+  let spring = STATE.springs2points.find((spring) => {
+      return spring.length == 5 && spring[4] == "mouseSpring";
+  });
+  if (spring){
+      spring[1] = mouseCoords;
+  }else{
+      spring = [particle_idx,mouseCoords,mouseSpringStiffness,
+        mouseSpringRestLength,"mouseSpring"];
+      STATE.springs2points.push(spring);
+  }
+
+  let [pIdx,mouseCoordsModel,_1,restLengthModel,_2] = spring;
+  drawer.drawSpringMouse(STATE, pIdx,mouseCoordsModel,restLengthModel);
+
+
+
+
+}
+
+
+
 class Drawer{
       /*
       * Lets make a recopilation of all the state properties drawn by the Drawer
@@ -1371,12 +1468,15 @@ class Drawer{
       * 
       */
       constructor(svg, x_model_domain = [-1,1],
-         y_model_domain = [-1,1], origin_model = [0,0]){
+         y_model_domain = [-1,1], origin_model = [0,0], preffixId = ""){
         this.svg = svg;// html dom, not d3
         this.x_model_domain = x_model_domain;
         this.y_model_domain = y_model_domain;
         this.origin_model = origin_model;
-
+        this.preffixId = preffixId? preffixId : svg.id;
+        this._firstMakeInteractiveCall = true;
+        
+        //if prefixId is provided we'll use it, if not we get the id of the svg
       }
 
       _checkInitState(STATE){
@@ -1516,6 +1616,20 @@ class Drawer{
         return radiuses;
       }
 
+      _model2CanvasSpring(STATE,spring){
+        let [idx,pinpoint,springConstant,restLength] = spring;
+        let point1 = STATE.xs[idx];
+        let dx = pinpoint[0] - point1[0];
+        let dy = pinpoint[1] - point1[1];
+        let current_distance = Math.sqrt(dx**2 + dy**2);
+        let [point1Canvas,pinpointCanvas] = this.model2Canvas([point1,pinpoint],true);
+        let distanceCanvas = this._calculateDistance(point1Canvas,pinpointCanvas);
+        let ratio = distanceCanvas/current_distance;
+        let restLengthCanvas = ratio * restLength;
+
+        return [idx,pinpointCanvas,springConstant,restLengthCanvas];
+      }
+
       state2Canvas(STATE){
         // Here we transform the different magnitudes in STATE to canvas coordinates, we must generate a twin canvasSTATE object
         //lets start by deep copying the STATE object
@@ -1607,7 +1721,12 @@ class Drawer{
         }
 
         if (STATE.hasOwnProperty("springs2points")){
+
+          /*
           let canvasSprings2Points = STATE.springs2points.map(spring => {
+          //we'll skip the mouseSpring, its drawing is managed by the mouseMoveSpringCallback
+          
+
             let [idx,pinpoint,springConstant,restLength] = spring;
             let point1 = STATE.xs[idx];
             let dx = pinpoint[0] - point1[0];
@@ -1617,12 +1736,28 @@ class Drawer{
             let distanceCanvas = this._calculateDistance(point1Canvas,pinpointCanvas);
             let ratio = distanceCanvas/current_distance;
             let restLengthCanvas = ratio * restLength;
+
             
             return [idx,pinpointCanvas,springConstant,restLengthCanvas];
           });
+          */
+
+          //lets filter to avoid the mouseSpring
+          let canvasSprings2Points = STATE.springs2points.filter(spring => {
+            return spring.length != 5 || spring[4] != "mouseSpring";
+          }).map(spring => {
+
+              
+              return this._model2CanvasSpring(STATE,spring);
+            })
 
           canvasSTATE.springs2points = canvasSprings2Points;
         }
+
+
+
+
+
 
         return canvasSTATE;
 
@@ -1667,6 +1802,24 @@ class Drawer{
 
       }
 
+      drawSpringMouse(STATE, pIdx,mouseCoordsModel,restLengthModel){
+
+
+        let springId = `spring_mouse`;
+        let [idx,pinpointCanvas,_,restLengthCanvas] = this._model2CanvasSpring(STATE,[pIdx,mouseCoordsModel,-1,restLengthModel]);
+        let point1Canvas = this.model2Canvas([STATE.xs[pIdx]],true)[0];
+        drawSpring(this.svg,point1Canvas,pinpointCanvas,restLengthCanvas,springId);
+
+      }
+
+      removeSpringMouse(id = "spring_mouse"){
+        let spring = document.getElementById(id);
+        if (spring){
+          this.svg.removeChild(spring);
+        }
+
+      }
+
 
       drawState(STATE, particlesGroupId = "particlesGroup",
                 polygonsGroupId = "polygonsGroup",
@@ -1674,16 +1827,19 @@ class Drawer{
 
         // lets get the id of this.svg to use it as prefix for everything drawn here
         //to get the id of an svg element we use the id property
-        let svgId = this.svg.id;
-        let particlesGroupId_full = svgId + "_" + particlesGroupId;
-        let polygonsGroupId_full = svgId + "_" + polygonsGroupId;
-        let springsGroupId_full = svgId + "_" + springsGroupId;
-        let constraintsGroupId_full = svgId + "_" + constraintsGroupId;
+        let preId = this.preffixId;
+        let particlesGroupId_full = preId + "_" + particlesGroupId;
+        let polygonsGroupId_full = preId + "_" + polygonsGroupId;
+        let springsGroupId_full = preId + "_" + springsGroupId;
+        let constraintsGroupId_full = preId + "_" + constraintsGroupId;
 
         this.particlesGroupId = particlesGroupId_full;
         this.polygonsGroupId = polygonsGroupId_full;
         this.springsGroupId = springsGroupId_full;
         this.constraintsGroupId = constraintsGroupId_full;
+
+
+        
 
 
 
@@ -1737,8 +1893,14 @@ class Drawer{
         points2 = points2.concat(points2_2);
         restLengths = restLengths.concat(restLengths_2);
         this.drawSprings(this.svg, points1, points2, restLengths, springsGroupId_full);
+
+        this.makeInteractive(STATE);
     
 
+      }
+
+      getParticlesGroup(){
+        return document.getElementById(this.particlesGroupId);
       }
       //lets draw a scale reference in a corner of the svg, a square with a side of 0.1 in model coordinates
       drawScaleReference(){
@@ -1774,6 +1936,84 @@ class Drawer{
 
       }
 
+
+      makeInteractive(STATE){
+
+        /////DISGUSTING PATCH TO MANUALLY DISPATCH MOUSEMOVE EVENT AND UPDATE
+        //MOUSE SPRING ATTACHMENT POINT
+        
+        let [lastClientX, lastClientY] = [this.svg.lastClientX, this.svg.lastClientY];
+
+        if (typeof(lastClientX) === "number" && typeof(lastClientY) === "number"){
+          let mousemoveEvent = new MouseEvent("mousemove", {
+            view: window,
+            bubbles: true,
+            cancelable: true,
+            clientX: lastClientX,
+            clientY: lastClientY
+          });
+          this.svg.dispatchEvent(mousemoveEvent);
+        }
+
+
+
+
+        ////
+
+        if (this._firstMakeInteractiveCall){
+          this._firstMakeInteractiveCall = false;
+        }
+        else{
+          return;
+        }
+        console.info(` Enable interactive particles `)
+        let [mouseSpringRestLength, mouseSpringStiffness] = [STATE.mouseSpringRestLength, STATE.mouseSpringStiffness];
+
+      //if null we default them to 10 and 0.1
+      if (typeof(mouseSpringStiffness) !== "number"){
+          mouseSpringStiffness = 25;
+
+          console.warn("Mouse spring stiffness not found in STATE, defaulting to 10");
+      }
+
+      if (typeof(mouseSpringRestLength) !== "number"){
+
+          mouseSpringRestLength = 0.03;
+          console.warn("Mouse spring rest length not found in STATE, defaulting to 0.1");
+      }
+
+
+        let canvas2ModelCallback = (pointCanvas) => {
+          return this.canvas2Model(pointCanvas,true);
+
+          }
+
+        let mouseMoveSpringCallback = (mouseCoordsModel, particle_idx) => {
+          _mouseMoveSpringCallback(this,STATE, mouseSpringRestLength,
+            mouseSpringStiffness,
+            mouseCoordsModel, particle_idx);
+        }
+
+        let mouseUpSpringCallback = () => {
+          _mouseUpSpringCallback(this,STATE);
+        }
+
+        let particlesGroup = this.getParticlesGroup();
+        if (particlesGroup){
+          let particles = particlesGroup.querySelectorAll(".particle");
+          particles.forEach((particle,idx) => {
+              particleInteractionMouse(this.svg, particle.id,
+                 canvas2ModelCallback, [mouseMoveSpringCallback], [mouseUpSpringCallback]);
+          }
+          );
+        }
+      }
+
+
+ 
+      
+
+
       remove(){
         //lets remove all the groups in the svg
         let groups = [this.particlesGroupId, this.polygonsGroupId, this.springsGroupId, this.constraintsGroupId+"_distance", this.constraintsGroupId+"_pin"];
@@ -1793,5 +2033,6 @@ export {drawCircles, drawLines,  drawArrow,drawPolygon,
    drawPinConstraints, drawCross, drawForces,
    drawConstraints,drawSpring,
    plotStateStoryPositionsVelocities, plotNonContactLagrangeMultipliers, plotContactLagrangeMultipliers, plotAngleDistanceConstraints,
+   particleInteractionMouse,
     CollisionDrawer,
     Plot, Drawer,PolygonDrawer};

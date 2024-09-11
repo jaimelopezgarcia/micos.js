@@ -15,7 +15,7 @@ computeExternalForces has signature computeExternalForces(forces,xarray,varray,m
 const DEBUG = true;
 
 if (DEBUG){
-    console.log("solver.js loaded","PENDING MODIFY HANDLING OF CONTACT CONSTRAINTS, NEEDED AN ADDITIONAL ITERATION AFTER CLIPPING LAGRANGE MULTIPLIERS (ACTIVE SET METHOD)");
+    console.debug("solver.js loaded","PENDING MODIFY HANDLING OF CONTACT CONSTRAINTS, NEEDED AN ADDITIONAL ITERATION AFTER CLIPPING LAGRANGE MULTIPLIERS (ACTIVE SET METHOD)");
 }
 
 
@@ -511,7 +511,7 @@ class Polygon{
                         //if the collision is not already in the map we'll add it
                         if (!collisions.has(collision_id)){        
                             new_collisions.set(collision_id,[i,closest_edge,polygon]);
-                            console.log(`NEW COLLISION :Particle ${i} with position ${point} closest edge ${closest_edge} distance ${distance} threshold ${threshold}`);
+                            console.debug(`NEW COLLISION :Particle ${i} with position ${point} closest edge ${closest_edge} distance ${distance} threshold ${threshold}`);
 
                         };
                     };
@@ -543,7 +543,7 @@ class Polygon{
                     
                     if (current_distance>treshold){
                         resolved_collisions.set(collision_id,collision);
-                        console.log(`RESOLVED COLLISION:Particle ${particle_index} with position ${xs[particle_index]} edge ${edge_index} distance ${current_distance} treehold ${treshold}`);
+                        console.debug(`RESOLVED COLLISION:Particle ${particle_index} with position ${xs[particle_index]} edge ${edge_index} distance ${current_distance} treehold ${treshold}`);
                     }
                 }
             }
@@ -1109,8 +1109,8 @@ function stepSemiEulerActiveSet(STATE,PARAMETERS, callbacksActuators = null){
         let lagrangeMultipliersContact = indicesConstraintsContact.map(i => outSolverConstraints.lagrange_multipliers[i]);
         let indicesNegative = lagrangeMultipliersContact.map((l,i) => [l,i]).filter(l => l[0] < 0).map(l => l[1]);
         //lets print the lagrange multipliers, and the indicesNegative
-        //console.log("Lagrange multipliers contact", lagrangeMultipliersContact);
-        //console.log("Indices negative", indicesNegative);
+        //console.debug("Lagrange multipliers contact", lagrangeMultipliersContact);
+        //console.debug("Indices negative", indicesNegative);
 
         return [outSolverConstraints, indicesNegative, J, dotJ];
     }
@@ -1124,7 +1124,7 @@ function stepSemiEulerActiveSet(STATE,PARAMETERS, callbacksActuators = null){
         }else{
             // we just update the state by removing the collision with the most negative lagrange multiplier
             let activeCollisions = s.collisions.filter((c,i) => !indicesNegative.includes(i));
-            //console.log(`Removing collision ${indicesNegative[0]} with lagrange multiplier ${outSolverConstraints.lagrange_multipliers[indicesNegative[0]]}`);
+            //console.debug(`Removing collision ${indicesNegative[0]} with lagrange multiplier ${outSolverConstraints.lagrange_multipliers[indicesNegative[0]]}`);
             STATE.collisions = activeCollisions;
         }
     }
@@ -1931,7 +1931,7 @@ function integrateSystem(STATE, nsteps, callbacksActuators = null,
 
     for (let key in defaultParams){
         if (!PARAMETERS.hasOwnProperty(key)){
-            console.log(`PARAMETERS object does not have key ${key}, using default value ${defaultParams[key]}`);
+            console.debug(`PARAMETERS object does not have key ${key}, using default value ${defaultParams[key]}`);
             PARAMETERS[key] = defaultParams[key];
         }
     }
@@ -1964,14 +1964,60 @@ function integrateSystem(STATE, nsteps, callbacksActuators = null,
     }
 
 
+
+ function  _checkInitState(STATE){
+        //here we'll write zeros for the missing properties in the state
+        // and print a info message to the console
+        // we'll check for the forces, if not we init them to [nparticles,2] array of zeros
+        //we'll check for polygons, if not we init them to an empty array
+        //We'll check for constraints and if not we init them to an empty array
+        //vs to zeros if not present aswell
+        //xs and masses are mandatory
+
+        if (!STATE.hasOwnProperty("xs")){
+          throw new Error("Missing xs in STATE");
+        }
+        if (!STATE.hasOwnProperty("masses")){
+          throw new Error("Missing masses in STATE");
+        }
+
+        
+        let nparticles = STATE.xs.length;
+        let names2InitZerosIfMissing = ["vs","external_forces", "constraint_forces",
+                                           "contact_forces", "friction_forces",
+                                           "actuator_forces",
+                                            "total_forces"];
+        let names2InitEmptyArrayIfMissing = ["polygons", "constraints_distance",
+                                             "constraints_pin","collisions","new_collisions","resolved_collisions",
+                                             "springs","springs2points"];
+
+        for (let name of names2InitZerosIfMissing){
+          if (!STATE.hasOwnProperty(name)){
+            STATE[name] = Array(nparticles).fill().map(()=>Array(2).fill(0));
+            console.info(`Property ${name} not found in STATE, initializing to zeros`);
+          }
+        }
+
+        for (let name of names2InitEmptyArrayIfMissing){
+          if (!STATE.hasOwnProperty(name)){
+            STATE[name] = [];
+            console.info(`Property ${name} not found in STATE, initializing to empty array`);
+          }
+        }
+
+        return STATE;
+      }
+
 function step(STATE, PARAMETERS = {}, callbacksActuators = null){
 
     //updates the state object with the new state after a time step
 
+    _checkInitState(STATE);
+
 
     let defaultParams = {
-        "alpha": 5,
-        "beta": 5,
+        "alpha": 15,
+        "beta": 15,
         "dt": 0.01,
         "muFriction": 0.0,
         "collisionThreshold": 0.01,
@@ -1979,14 +2025,17 @@ function step(STATE, PARAMETERS = {}, callbacksActuators = null){
 
     for (let key in defaultParams){
         if (!PARAMETERS.hasOwnProperty(key)){
-            console.log(`PARAMETERS object does not have key ${key}, using default value ${defaultParams[key]}`);
+            console.debug(`PARAMETERS object does not have key ${key}, using default value ${defaultParams[key]}`);
             PARAMETERS[key] = defaultParams[key];
         }
     }
 
-    let newState = stepSemiEulerActiveSet(state,PARAMETERS, callbacksActuators);
+    let newState = stepSemiEulerActiveSet(STATE,PARAMETERS, callbacksActuators);
 
-    return newState;
+    //lets loop over newState keys and update the STATE object, so the outer scope object is updated
+    for (let key in newState){
+        STATE[key] = newState[key];
+    }
 
 
 }
