@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Integration Test</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.4/math.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/delaunator@5.0.0/delaunator.min.js"></script>
+</head>
+
+
+<style>
+    /*
+    * lets make a grid of 2 columns main_canvas/plots_panel, and plots_panel will have all its child divs in a row with a scrollbar for 
+    * overflow
+    */
+
+    body{
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .main_canvas{
+        display: flex;
+        grid-gap: 0px;
+        padding: 0px;
+        
+    }
+
+    .svg{
+        border: 1px solid black;
+        width: 800px;
+        height: 800px;
+        margin: 0px;
+    }
+
+    .slider{
+        width: 100%;
+        margin-top: 0px;
+    }
+
+    .plots_panel{
+        display: flex;
+        grid-gap: 1px;
+        padding: 1px;
+        overflow: auto;
+        width:  1200px;
+        height: 800px;
+    }
+
+    .state_info_panel{
+        border: 1px solid black;
+        width: 300px;
+        height: 500px;
+        overflow: auto;
+
+        
+    }
+
+</style>
+<body>
+
+    <div id = "main_canvas" class = "main_canvas">
+        </div>
+
+
+    <script type="module">
+            import {Drawer,plotNonContactLagrangeMultipliers, plotContactLagrangeMultipliers, plotAngleDistanceConstraints} from "./drawing.js"; //drawer.drawState(STATE,VISUAL_OPTIONS,particles_group_id); is the function to draw the state of the system
+            import {displayObjectInDiv, displayMouseCoords} from "./utils.js";
+            import {initState,StateUtils, stepSemiEulerActiveSet,integrateSystem} from "./solver.js";   
+            import {calculateKineticEnergy,getAngle} from "./math_utils.js"
+            import {SelectionPanel} from "./dashboardUI.js";
+            /*Example usage of SelectionPanel
+                const data = {
+                    Particle_0: ['X Position', 'Y Position'],
+                    Particle_1: ['X Position', 'Y Position']
+                };
+
+                const selectionPanel = new SelectionPanel(data);
+
+                //methods
+                selectionPanel.gatherSelections(); //returns an array of the selected checkboxes, for instance ['Particle_0->X Position', 'Particle_1->Y Position']
+                selectionPanel.clearSelections(); //clears all the selected checkboxes
+                selectionPanel.selectAll(); //selects all the checkboxes
+                */
+    
+                    
+        function pendulumSystemConfig(thetaO, omegaO, g, L, mass){
+
+                    let x0 = [[L*Math.sin(thetaO), -L*Math.cos(thetaO)]]; // [nparticles,2] [1,2] ( 1 particle)
+                    let v0 = [[omegaO*L*Math.cos(thetaO), omegaO*L*Math.sin(thetaO)]];
+                    let masses = [mass];
+                    let constraints_distance = [];
+                    let constraints_pin = [[0, [0,0], L]];
+                    let gravity = [g, [0,-1]];
+                    let time = 0;
+                    let dampingCoef = 0.;
+                    let initialState = {
+                        xs: x0,
+                        vs: v0,
+                        masses: masses,
+                        constraints_distance: constraints_distance,
+                        constraints_pin: constraints_pin,
+                        collisions: [],
+                        gravity: gravity,
+                        time: time,
+                        polygons: [],
+                        damping: x0.map((x,i) => [[i],dampingCoef]),
+
+                        }
+
+
+
+                    return initialState;
+                }
+
+                function doublePendulumSystemConfig(thetaO1, omegaO1, thetaO2, omegaO2, g, L1, L2, mass1, mass2){
+                let x00 = [L1*Math.sin(thetaO1), -L1*Math.cos(thetaO1)];
+                let x01 = [x00[0] + L2*Math.sin(thetaO2), x00[1] - L2*Math.cos(thetaO2)];
+                let x0 = [x00, x01];
+                let v0 = [[omegaO1*L1*Math.cos(thetaO1), omegaO1*L1*Math.sin(thetaO1)], [omegaO2*L2*Math.cos(thetaO2), omegaO2*L2*Math.sin(thetaO2)]];
+                let masses = [mass1, mass2];
+                let constraints_distance = [ [0,1, L2]];
+                let constraints_pin = [[0, [0,0], L1]];
+                let gravity = [g, [0,-1]];
+                let time = 0;
+                let dampingCoef = 1e-3;
+
+                let initialState = {
+                    xs: x0,
+                    vs: v0,
+                    masses: masses,
+                    constraints_distance: constraints_distance,
+                    constraints_pin: constraints_pin,
+                    gravity: gravity,
+                    time: time,
+                    polygons: [],
+                    damping: x0.map((x,i) => [[i],0.]),
+                    collisions: []
+
+                    }
+
+                return initialState;
+            }
+
+        function createModelPanels(model_name){
+            // if there is already a model panel with model_name id, throw an error
+            // The slider will have id model_name + "_slider"
+            // the main canvas will have id model_name + "_canvas"
+            // the plots panel will have id model_name + "_plots_panel" 
+            //Lets add a svg and the slider in the same main canvas div
+            // styling will be in <styles> here we just add proper class names
+
+            // create the main canvas
+            var main_canvas = document.getElementById("main_canvas");
+
+            // Slider and svg inside main_canvas
+            var divSvgDraw = document.createElement("div");
+            main_canvas.appendChild(divSvgDraw);
+            var svgDraw = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svgDraw.id = model_name + "_svg";
+            //lets set width and height of the svg
+
+            //lets add the class main_canvas_svg
+            svgDraw.setAttribute("class", "svg");
+
+            
+
+            var slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = 0;
+            slider.max = 100;
+            slider.value = 0;
+            slider.id = model_name + "_slider";
+            slider.className = "slider";
+            //lets add the slider at the bottom of svgDraw
+
+            divSvgDraw.appendChild(svgDraw);
+            divSvgDraw.appendChild(slider);
+
+
+
+            var state_info_panel = document.createElement("div");
+            state_info_panel.id = model_name + "_state_info_panel";
+            state_info_panel.className = "state_info_panel";
+            main_canvas.appendChild(state_info_panel);
+
+
+
+
+            var plots_panel = document.createElement("div");
+            plots_panel.id = model_name + "_plots_panel";
+            plots_panel.className = "plots_panel";
+            main_canvas.appendChild(plots_panel);
+ 
+        }
+
+
+        function drawStateStories(stateStoryModel, modelName,VISUAL_OPTIONS){
+                let svgName = modelName + "_svg";
+                let svgMain = document.getElementById(svgName);
+                if(svgMain == null){
+                    createModelPanels(modelName);
+                    svgMain = document.getElementById(svgName);
+                }
+
+                let particlesGroupId = modelName + "_particles";
+                let polygonsGroupId = modelName + "_polygons";
+                let drawer = new Drawer(svgMain, [-2,2],[-2,2]);
+                //lets increase the width of svgMain
+
+            
+                let nsteps = stateStoryModel.length;
+
+                drawer.drawState(stateStoryModel[0], particlesGroupId, polygonsGroupId, VISUAL_OPTIONS);
+            // drawerAnalytical.drawState(stateStoryAnalytical[0], particlesGroupIdAnalytical, polygonsGroupIdAnalytical, VISUAL_OPTIONS2);
+
+                let slider = document.getElementById(modelName + "_slider");
+                slider.min = 0;
+                slider.max = nsteps - 1;
+
+                slider.addEventListener("input", function(){
+                    let index = parseInt(this.value);
+                    let STATE = stateStoryModel[index];
+                    drawer.drawState(STATE, particlesGroupId, polygonsGroupId, VISUAL_OPTIONS);
+                    // we display the STATE[index] in the state_info_panel
+                    let stateInfoId = modelName + "_state_info_panel";
+                    displayObjectInDiv(STATE, stateInfoId);
+                    
+                });
+
+                function canvas2ModelCallback(points){
+                    return drawer.canvas2Model(points, true)// true for shifing origin, false if transforming forces
+                }
+
+                displayMouseCoords(svgMain,  canvas2ModelCallback )
+
+        return [drawer];
+    }
+
+    function plotResults(stateStory){
+        let sUtils = new StateUtils();
+        let tArray = stateStory.map((state) => state.time);
+        let totalEnergy = stateStory.map((state) => sUtils.getTotalEnergy(state));
+        let angles = stateStory.map((state) => sUtils.getAngleBtwConstraintsPinHorizontal(state,"deg")[0] );
+
+        //lets create the traces layouts and divs for the plotly plots
+        let totalEnergyTrace = {
+            x: tArray,
+            y: totalEnergy,
+            type: "scatter",
+            name: "Total Energy",
+        }
+
+        let anglesTrace = {
+            x: tArray,
+            y: angles,
+            type: "scatter",
+            name: "Angle",
+        }
+
+        let totalEnergyDiv = document.createElement("div");
+        let anglesDiv = document.createElement("div");
+
+        totalEnergyDiv.id = "total_energy_div";
+        anglesDiv.id = "angles_div";
+
+        document.getElementById("pendulum_plots_panel").appendChild(totalEnergyDiv);
+        document.getElementById("pendulum_plots_panel").appendChild(anglesDiv);
+
+        //layouts
+        //lets get the height of the parent div to use it as height for the plots
+        let parentDiv = document.getElementById("pendulum_plots_panel");
+        let parentDivHeight = parentDiv.clientHeight;
+
+
+
+        let totalEnergyLayout = {
+            title: "Total Energy",
+            xaxis: {
+                title: "Time"
+            },
+            yaxis: {
+                title: "Energy"
+            },
+            width: 500,
+            height: parentDivHeight,
+        }
+
+        let anglesLayout = {
+            title: "Angle",
+            xaxis: {
+                title: "Time"
+            },
+            yaxis: {
+                title: "Angle"
+            },
+            width: 500,
+            height: parentDivHeight,
+        }
+
+        Plotly.newPlot(totalEnergyDiv, [totalEnergyTrace], totalEnergyLayout);
+        Plotly.newPlot(anglesDiv, [anglesTrace], anglesLayout);
+
+
+
+    }
+
+
+    function calculateTorqueLeastNormedForce(pivotPoint, applicationPoint, torqueValue){
+        // here we calculate the least normed force that can generate the given torque (perpendicular to the r vector)
+        // because it is a 2D problem we can use for the torque vector [0,0,torqueValue]
+        //and we pick the force vector [fx,fy,0]
+
+        let torqueVec = [0,0,torqueValue];
+        let rVec = math.subtract(applicationPoint, pivotPoint);
+        let normR = math.norm(rVec);
+        let rVecUnit = math.divide(rVec, normR);
+        //lets make rvec a 3D vector
+        rVecUnit.push(0);
+        let forceVec = math.divide( math.cross(torqueVec,rVecUnit),normR);
+        //we retrieve the first 2 components of the force vector
+        return forceVec.slice(0,2);
+        }
+
+
+    //lets implement an actuator that applies a torque to the pendulum
+    //by now, for simplicity lets implement the actuators as callbacks that has the state
+    //as input and return a force array
+  
+
+    //lets write a function to get the neighbors dict from a state object
+    // we have to parse the constraints distance and pin to give a dict like
+    //{iParticle: [ [jParticle,distancej], [kParticle,distancek]...]}
+    //additionaly a dict with the pin constraints {iParticle: [pinPoint, distance]}
+
+    function getNeighborsDict(STATE){
+        let constraintsDistance = STATE.constraints_distance;
+        let constraintsPin = STATE.constraints_pin;
+        let neighborsDict = {};
+        let pinDict = {};
+        for(let i = 0; i < constraintsDistance.length; i++){
+            let [iParticle, jParticle, distance] = constraintsDistance[i];
+            if(neighborsDict[iParticle] == undefined){
+                neighborsDict[iParticle] = [[jParticle, distance]];
+            }else{
+                neighborsDict[iParticle].push([jParticle, distance]);
+            }
+
+            if(neighborsDict[jParticle] == undefined){
+                neighborsDict[jParticle] = [[iParticle, distance]];
+            }else{
+                neighborsDict[jParticle].push([iParticle, distance]);
+            }
+        }
+
+        for(let i = 0; i < constraintsPin.length; i++){
+            let [iParticle, pinPoint, distance] = constraintsPin[i];
+            pinDict[iParticle] = [pinPoint, distance];
+        }
+
+        return [neighborsDict, pinDict];
+    }
+
+   //lets write the base class for torque actuators
+    //to apply some torque on a target distance-constraint-particle, the pivot particle , besides being attached to the target particle
+    //needs to be attached to a fixed point or to at least a 2nd neighbor particle
+    // so  we have to impart the appropiate force to the target particle, additionally we'll impart -torque/Notherneighbors,
+    // so dLsystemdt = 0 (internal forces). When the pivot is fix, the -torque applied on the fix point, will be canceled by the fix point
+    // so there will be a dLdt != 0 net on the system. Additionally we must add on the pivot particle \sum f_i so there is conservartion of momentum
+
+//I think we've overcomplicated the torque actuator, I mean, sure in practical torque actuators there will be reaction torques and coupled forces
+// but it is better to have a clean  torque actuator that just acts decoupledly on a rotational degree of freedom
+// so we'll do two classes, joint torque actuator and fixed-pivot torque actuator, the first will use a particle as pivot and a target neighbor particle as target
+// the second will use a fixed specified point as pivot and a target particle as target
+
+class TorqueActuatorPin{
+    /*
+Example usage:
+let torqueFun = (theta, omega, time) => torqueFunction(theta, omega, time, 0.0, 50, 0.5);
+let actuator = new TorqueActuatorPin([0,0], 0, torqueFun);
+let callbacksActuators = [actuator.getForceArray.bind(actuator)];
+
+    */
+        constructor(pinPoint, targetParticle, torqueFunction){
+            this.pinPoint = pinPoint;
+            this.targetParticle = targetParticle;
+            this.torqueFunction = torqueFunction;
+            this._checkTorqueFunction(torqueFunction);
+        }
+
+        getName(){
+            //we return TorqueActuatorPin_targetParticleIdx
+            return `TorqueActuatorPin_${this.targetParticle}`;
+        }
+        _checkTorqueFunction(torqueFunction){
+            // basic check to see the torqueFunction has the right signature and gives a number
+            let [theta, omega, time] = [0,0,0];
+            let torque = torqueFunction(theta, omega, time);
+            if(typeof torque != "number"){
+                throw "The torque function must return a number";
+            }
+        }
+
+        getForceArray(STATE, returnTorque = false){
+            let [xarray,varray,time] = [STATE.xs, STATE.vs, STATE.time];
+            let targetIdx = this.targetParticle;
+            let rpivotTarget = math.subtract(xarray[targetIdx], this.pinPoint);
+            let thetaTarget = getAngle(rpivotTarget, [1,0]);
+            let [rTemp, vTemp] = [[rpivotTarget[0], rpivotTarget[1],0], [varray[targetIdx][0], varray[targetIdx][1],0]];
+            let omegaTarget = math.cross(rTemp, vTemp)[2]/math.norm(rpivotTarget);
+            let torque = this.torqueFunction(thetaTarget, omegaTarget, time);
+            let forceTarget = calculateTorqueLeastNormedForce(this.pinPoint, xarray[targetIdx], torque);
+            let forceArray = Array(xarray.length).fill().map((_,i) => [0,0]);
+            forceArray[targetIdx] = forceTarget;
+            
+            if(returnTorque){
+                return [forceArray, torque];
+            }else{
+                return forceArray;
+            }
+       
+        }
+
+    getTorque(STATE){
+        //util function to retrieve the torque associated with the pinpoint target joint
+        // basically we call getForceArray and return the second element
+        return this.getForceArray(STATE, true)[1];
+    }
+
+    }
+
+// now lests write a joint torque actuator, that will act on a target particle and a pivot particle, we can reuse the TorqueActuatorPin but we have to
+// dynamically change the pinPoint to the pivot particle position
+
+class TorqueActuatorJoint{
+        constructor(pivotParticleIdx, targetParticleIdx, torqueFunction){
+            this.pivotParticleIdx = pivotParticleIdx;
+            this.targetParticleIdx = targetParticleIdx;
+            this.torqueFunction = torqueFunction;
+            this.firstCall = true;// on the first getForceArray call we assert that pivot and target particles are neighbors
+            
+            this._checkTorqueFunction(torqueFunction);
+        }
+
+        getName(){
+            //we return TorqueActuatorJoint_pivotParticleIdx_targetParticleIdx
+            return `TorqueActuatorJoint_${this.pivotParticleIdx}_${this.targetParticleIdx}`;
+        }
+        _checkTorqueFunction(torqueFunction){
+            // basic check to see the torqueFunction has the right signature and gives a number
+            let [theta, omega, time] = [0,0,0];
+            let torque = torqueFunction(theta, omega, time);
+            if(typeof torque != "number"){
+                throw "The torque function must return a number";
+            }
+        }
+
+        _checkNeighbors(STATE){
+            if (this.firstCall){
+                    let [neighborsDict, pinDict] = getNeighborsDict(STATE);
+                    this.neighborsDict = neighborsDict;
+                    this.pinDict = pinDict;
+                    this.firstCall = false;
+
+                    //lets check that the pivot and target particles are neighbors
+                    let neighborsPivot = this.neighborsDict[this.pivotParticleIdx];
+                    //lets throw an error if target particles is not in neighborsPivot
+                    let targetParticleInNeighbors = neighborsPivot.some(([idx, _]) => idx == this.targetParticleIdx);
+                    if(!targetParticleInNeighbors){
+                        throw `The target particle ${this.targetParticleIdx} is not a neighbor of the pivot particle ${this.pivotParticleIdx}, neighbors are ${neighborsPivot}`;
+                    }
+        
+                }
+        }
+        getForceArray(STATE, returnTorque = false){
+
+            this._checkNeighbors(STATE);
+
+            let [xarray,varray,time] = [STATE.xs, STATE.vs, STATE.time];
+            let pivotXs = xarray[this.pivotParticleIdx];
+
+            let torqueActuatorPin = new TorqueActuatorPin(pivotXs, this.targetParticleIdx, this.torqueFunction);
+
+            return torqueActuatorPin.getForceArray(STATE, returnTorque);
+        }
+
+        getTorque(STATE){
+
+            return this.getForceArray(STATE, true)[1];
+        }
+
+    }
+
+
+      
+          
+
+    //lets write a step torque function to pass to the torque actuator
+
+    function torqueFunctionPWM(theta, omega, time, stepAmp = 0.1, stepPeriod = 5, dutyCycle = 0.1
+    ){
+        // positive square wave function we start at 0
+        let period = 2*stepPeriod;
+        let nPeriods = Math.floor(time/period);
+        let t = time - nPeriods*period;
+        let tOn = dutyCycle*period;
+        let torque = 0;
+        if(t < tOn){
+            torque = stepAmp;
+        }
+        return torque;
+
+
+
+    }
+
+    function torqueFunctionStep(theta,omega,time, stepAmp = 0.1, initTime = 0.5){
+        let torque = 0;
+        if(time > initTime){
+            torque = stepAmp;
+        }
+        return torque;
+    }
+
+    //lets implement a simple PID controller for the pendulum, only proportional 
+    // so it reaches a desired angle
+    class PIDController{
+        constructor(pinPoint, idxParticle, desiredAngle){
+            this.pinPoint = pinPoint;
+            this.idxParticle = idxParticle;
+            this.desiredAngle = desiredAngle;
+            this.Kp = 5;
+            this.Kd = 0.;
+            this.Ki = 0.;
+            this.integralError = 0;
+            this.prevError = 0;
+        }
+
+        getForceArray(STATE){
+            let [xarray,varray,time] = [STATE.xs, STATE.vs, STATE.time];
+            let x = xarray[this.idxParticle];
+            let r = math.subtract(x, this.pinPoint);
+            let theta = getAngle(r, [1,0]);
+            //r and v to 3d vectors to calculate the cross product
+            r.push(0);
+            let vcopy = varray[this.idxParticle].slice();
+            vcopy.push(0);
+            let omega = math.cross(r, vcopy)[2];
+            let error = this.desiredAngle - theta;
+
+            this.prevError = error;
+            let torque = this.Kp*error;
+            let force = calculateTorqueLeastNormedForce(this.pinPoint, x, torque);
+
+            //lets create a [nparticles,2] zero array and set the force in the idxParticle row
+            let forceArray = Array(xarray.length).fill().map((_,i) => [0,0]);
+            forceArray[this.idxParticle] = force;
+            return forceArray;
+
+        }
+
+    }
+
+    function postProcessStateStory(stateStory){
+        //lets add the kinetic energy and the angle between the pin and the horizontal
+        let sUtils = new StateUtils();
+        let nsteps = stateStory.length;
+        for(let i = 0; i < nsteps; i++){
+            let state = stateStory[i];
+            state.kineticEnergy = sUtils.getKineticEnergy(state);
+            state.totalEnergy = sUtils.getTotalEnergy(state);
+            state.COM = sUtils.getCOM(state);
+            state.angleConstraintsPin = sUtils.getAngleBtwConstraintsPinHorizontal(state, "deg")[0];
+            state.angleConstraintsDistance = sUtils.getAngleBtwConstraintsDistanceHorizontal(state, "deg")[0];
+        }
+    }   
+
+    function _integrateSystem(STATE, PARAMETERS, nsteps,
+                             callbacksActuators = null){
+        let s = STATE;
+        let STATE_STORY = [s];
+
+        for(let i = 0; i < nsteps; i++){
+            let newState = stepSemiEulerActiveSet(s,PARAMETERS, callbacksActuators);
+            STATE_STORY.push(newState);
+            s = newState;
+           }
+
+        postProcessStateStory(STATE_STORY);
+
+        return STATE_STORY;
+
+    }
+
+    // lets make an interactive plot using plotly and SelectionPanel
+    // the idea is to plot the selected variables retrieved by selectionPanel.gatherSelections() [key1_variable1, key2_variable2, ...]
+    // the  root data of the selection panel will be [Particle_0: [stateKey1, stateKey2, ...], Particle_1: [stateKey1, stateKey2, ...], Actuator_0: [torque], ...]
+    // so for instance if a selection is Particle_0_external_forces, we'll split this into idxP = 0, key = external_forces and we'll plot from stateStory
+    // the stateStory[i].external_forces[idxP] vs stateStory[i].time for all i
+    // for the actuators we'll  use getTorque method to plot the torque applied by the actuator
+
+    
+
+    function plotInteractive(stateStory, actuatorsList, selectionPanel, parentDivId){
+
+        let parentDiv = document.getElementById(parentDivId);
+        let parentDivHeight = parentDiv.clientHeight;
+        let parentDivWidth = parentDiv.clientWidth;
+        let nsteps = stateStory.length;
+        let tArray = stateStory.map((state) => state.time);
+        let sUtils = new StateUtils();
+        let data = selectionPanel.gatherSelections();
+        let traces = [];
+        let layout = {
+            title: "Interactive Plot",
+            xaxis: {
+                title: "Time"
+            },
+            yaxis: {
+                title: "Value"
+            },
+            width: parentDivWidth,
+            height: parentDivHeight,
+        }
+
+        for(let i = 0; i < data.length; i++){
+                // now for the split, we split by -> to get root-key
+                // if Particle is in root, we split by _ to get idxP as the second element
+                // if Actuator is in root, we use the whole root string as the actuator name and we find it by name in actuatorsList
+                // if neither Particle nor Actuator is in root, we throw an informative error
+                let [root, key] = data[i].split("->");
+                /*
+                if(root.includes("Particle")){
+                    let [_, idxP] = root.split("_");
+                    let idxParticle = parseInt(idxP);
+                    let yArray = stateStory.map((state) => state[key][idxParticle]);
+                    let tracex = {
+                        x: tArray,
+                        y: yArray.map((y) => y[0]),
+                        type: "scatter",
+                        name: `${root}_${key}_x`,
+                    }
+                    let tracey = {
+                        x: tArray,
+                        y: yArray.map((y) => y[1]),
+                        type: "scatter",
+                        name: `${root}_${key}_y`,
+                    }
+                    traces.push(tracex);
+                    traces.push(tracey);
+            } 
+            */
+           //lets generalize the above code to  loop over all dimensions of yArray and create a trace for each dimension
+
+           
+            if(root.includes("Particle")){
+                let [_, idxP] = root.split("_");
+                let idxParticle = parseInt(idxP);
+                let yArray = stateStory.map((state) => state[key][idxParticle]);
+                for(let j = 0; j < yArray[0].length; j++){
+                    let trace = {
+                        x: tArray,
+                        y: yArray.map((y) => y[j]),
+                        type: "scatter",
+                        name: `${root}_${key}_${j}`,
+                    }
+                    traces.push(trace);
+                }
+            }
+
+            else if(root.includes("Actuator")){
+                let actuator = actuatorsList.find((actuator) => actuator.getName() == root);
+                if(actuator == undefined){
+                    throw `Actuator ${key} not found in actuatorsList`;
+                }
+                let yArray = stateStory.map((state) => actuator.getTorque(state));
+                let trace = {
+                    x: tArray,
+                    y: yArray,
+                    type: "scatter",
+                    name: `${root}_Torque`,
+                }
+                traces.push(trace);
+            }else{
+                throw `Root ${root} not recognized, must be Particle or Actuator`;
+            }
+            //above code is wrong,we must check for Particle in root, not Particle==root
+            //substring matches in javascript are done with indexOf, not ==, for instance:
+            //
+
+        }
+
+
+        let plotDiv = document.getElementById("interactive_plot");
+        if(plotDiv != null){
+            parentDiv.removeChild(plotDiv);
+        }
+        plotDiv = document.createElement("div");
+        parentDiv.appendChild(plotDiv);
+        plotDiv.id = "interactive_plot";
+
+        Plotly.newPlot(plotDiv, traces, layout);
+    }
+
+
+    function createSelectionPanel( stateStory, actuatorsList, parentDivId){
+        let parentDiv = document.getElementById(parentDivId);
+        let data = {};
+        let sUtils = new StateUtils();
+        let nsteps = stateStory.length;
+        let tArray = stateStory.map((state) => state.time);
+        let particleKeys = Object.keys(stateStory[0]);
+        let nParticles = stateStory[0].xs.length;
+        for(let i = 0; i < nParticles; i++){
+            let particleKey = `Particle_${i}`;
+            data[particleKey] = particleKeys.map((key) => key);
+        }
+
+        for(let i = 0; i < actuatorsList.length; i++){
+            let actuator = actuatorsList[i];
+            let actuatorName = actuator.getName();
+            data[actuatorName] = ["Torque"];
+        }
+
+        let id = "selectionPanel";
+        let selectionPanel = new SelectionPanel(data,parentDivId, id);
+        parentDiv.appendChild(selectionPanel.getPanel());
+
+        let plotButton = document.createElement("button");
+        plotButton.innerHTML = "Plot";
+        plotButton.onclick = function(){
+            plotInteractive(stateStory, actuatorsList, selectionPanel, parentDivId);
+        }
+
+        parentDiv.appendChild(plotButton);
+
+        
+    }
+        
+
+    window.onload = function(){
+        let PARAMETERS = {"dt": 0.01, "alpha":5,"beta":5,"g":0.1,"collisionThreshold":0.001,"muFriction":0};
+        //let torqueFun = (theta, omega, time) => torqueFunction(theta, omega, time, 0.0, 50, 0.5);
+        let torqueFun = (theta, omega, time) => torqueFunctionStep(theta, omega, time, 0.05, 2);
+        let STATE = pendulumSystemConfig(0., 0, PARAMETERS.g, 1, 1);
+       // let STATE = doublePendulumSystemConfig(0, 0, 0, 0, PARAMETERS.g, 1, 1, 1, 1);
+        window.getNeighborsDict = getNeighborsDict;
+
+        //let actuator = new PIDController(STATE.constraints_pin[0][1], 0, -Math.PI/2+10*Math.PI/180);
+        let actuator = new TorqueActuatorPin(STATE.constraints_pin[0][1], 0, torqueFun);
+       // let actuator = new TorqueActuatorJoint(0, 1, torqueFun);
+        let callbacksActuators = [actuator.getForceArray.bind(actuator)];
+        window.actuator = actuator;
+        
+        window.STATE = STATE;
+        window.sUtils = new StateUtils();
+        let VISUAL_OPTIONS = {"particle_density":0.01, "scale_arrows_force":0.1};
+        let TIME = 40;
+        let nsteps = TIME/PARAMETERS.dt;
+        let stateStory = integrateSystem(STATE,nsteps,callbacksActuators, "SemiEulerActiveSet", PARAMETERS);
+        drawStateStories(stateStory, "pendulum", VISUAL_OPTIONS);
+        
+        let actuatorsList = [actuator];
+        let parentDivId = "pendulum_plots_panel";
+        createSelectionPanel(stateStory, actuatorsList, parentDivId);
+
+
+    }
+    </script>
+</body>
+</html>

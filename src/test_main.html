@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+  <style>
+      #debug-info {
+      position: absolute;
+
+      border: 1px solid black;
+      padding: 10px;
+      background-color: white;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      border: 1px solid black;
+      padding: 10px;
+      background-color: white;
+    }
+
+    #svgMain {
+      border: 1px solid black;
+    }
+  </style>
+  <head>
+    <title>Constraint Solver Test RealTime</title>
+  </head>
+  <body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.2/math.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/delaunator@5.0.0/delaunator.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+
+
+    <svg id="svgMain" width="1200" height="1200">
+     </svg>
+
+
+
+
+    <script type="module">
+
+        import {step, StateUtils} from "./solver.js";
+        import {Drawer,  particleInteractionMouse} from "./drawing.js";
+        import {model2Canvas, canvas2Model,translate, scale, rotate, rotateCOM,getNeighborsDelauney} from "./math_utils.js";
+        import {play} from "./main.js";
+
+        /*
+
+        step(STATE, PARAMETERS = {}, callbacksActuators = null)
+       */
+   
+    function compassWalkerState(groundAngle= 4.2,actuated = null){
+        //Simple gated compas walker, basically 3 masses with 2 distance constraints
+        // when one of the masses contacts the ground, its dynamics are the same as an inverted double pendulum
+        //if springActuator is not null, it must be a SpringActuator object, and we create a cos(t) contraction function as in the example
+
+        //lets add two extra masses as rigid knees, just to attach the springActuator
+
+        let initialAngleDeg = 40;
+        let initialAngle = initialAngleDeg*Math.PI/180;
+        let uVec = [Math.cos(initialAngle), -Math.sin(initialAngle)];
+        let legLength = 0.5;
+        let xs = [[0,0],
+                  [0,legLength],
+                  [0,2*legLength],//head
+                  [legLength*uVec[0],legLength*uVec[1]+2*legLength],
+                  [2*legLength*uVec[0],2*legLength*uVec[1]+2*legLength]
+                ];
+
+        
+
+        //lets rotate the xs 20º around the first particle
+
+        xs = rotate(xs,4,xs[0]);
+        // lets translate the xs to the left
+        xs = translate(xs,[-0.5,-0.3]);
+        // now lets add the distance constraints between [[0,1],[0,2],[1,2],[2,3],[2,4],[3,4]]
+
+        let constraints_distance = [[0,1,legLength],
+                                    [0,2,2*legLength],
+                                    [1,2,legLength],
+                                    [2,3,legLength],
+                                    [2,4,2*legLength],
+                                    [3,4,legLength]];
+
+        let masses = [3,1,3,1,3];
+
+        let callbacksActuators = null;
+
+        if (actuated!=null){
+            let k = 1;
+            let l0 = 0.5;
+            let contractionFunction = (distance, time, l0Current, kCurrent) => [l0*Math.cos(time)+1, k];
+            let actuator = new SpringActuator(1,3, contractionFunction, k, l0);
+
+            callbacksActuators = [actuator.getForceArray.bind(actuator)];
+
+        }else{
+            callbacksActuators = null;
+        }
+
+        // lets create a wide ground polygon that spans from -4 to 4 in x and -1 to -0.5 in y, and rotate it 20º
+
+        // lets create the polygon in clockwise order
+        let ground = [[-4,-1],[-4,-0.5],[4,-0.5],[4,-1]];
+        ground = rotateCOM(ground, groundAngle);
+        let polygons = [ground];
+        let dampingCoef = 0.0001;
+
+        let STATE = {
+            "xs": xs,
+            "vs": xs.map((x) => {return [0,0]}),
+            "masses": masses,
+            "constraints_distance": constraints_distance,
+            "constraints_pin": [],
+            "polygons": polygons,
+            "t":0,
+            "gravity": [0.5,[0,-1]],
+            "springs": [],//particle1, particle2, stiffness, restLength
+            "damping": xs.map((x,i) => [[i],dampingCoef]),
+
+        };
+
+        return [STATE, callbacksActuators];
+
+
+
+
+
+    }   
+
+
+
+    window.onload = function(){
+
+
+        let [STATE, callbacksActuators] = compassWalkerState(4.2);
+        let svg = document.getElementById("svgMain");
+
+        play(svg,STATE)
+    }
+    
+
+
+
+
+        </script>
+    </body>
+</html>
