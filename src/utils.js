@@ -1,41 +1,5 @@
 
 
-/**
- * Slices a given matrix according to the provided slices.
- *
- * @param {Matrix} matrix - The matrix to slice.
- * @param {Array} slices - An array of slices. Each slice can be a single integer (for a specific index) or an array of two integers (for a range of indices).
- * @returns {Matrix} The sliced matrix.
- *
- * @example
- * // Create a 3x3 matrix
- * let m = math.matrix([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
- *
- * // Slice the matrix to get the first two rows and the first column
- * let sliced = sliceMatrix(m, [[0, 2], 0]);
- * // sliced is now a 2x1 matrix: [[1], [4]]
- */
-function sliceMatrix(matrix, slices) {
-    let shape = matrix.size();
-    let ranges = [];
-  
-    for (let i = 0; i < shape.length; i++) {
-      let slice = slices[i];
-      if (Array.isArray(slice)) {
-        let start = slice[0];
-        let end = slice[1];
-        if (end == -1) {
-          end = shape[i];
-        }
-        ranges.push(math.range(start, end));
-      } else {
-        ranges.push(slice); // is an int
-      }
-    }
-  
-    let sliced = math.subset(matrix, math.index(...ranges));
-    return sliced;
-  }
 
   function prettyPrintState(state) {
     var output = "";
@@ -174,5 +138,5 @@ function displayMouseCoords(svg,  canvas2ModelCallback = null,div_output_id = nu
 }
 
 
-export { sliceMatrix, prettyPrintState, displayStateText, capDecimalsArray,
+export {prettyPrintState, displayStateText, capDecimalsArray,
         displayObjectInDiv, getSvgRelativeCoords, displayMouseCoords};

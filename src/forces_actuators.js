@@ -1,4 +1,6 @@
 import {getNeighborsDict,getAngle} from "./math_utils.js";
+//lets import math.js
+import * as math from "mathjs";
 
 /*
 All forces has the signature method getForceArray(xarray, varray, masses)

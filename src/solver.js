@@ -2,6 +2,10 @@ import { ConstraintDistance, ConstraintPin, ConstraintContact } from "./constrai
 import {getAngle, translate, rotate,rotateCOM, getNeighborsDelauney, calculateInertiaMoment,
     integrateOde, integrateOdeOnTarray, isShapeEqual, calculateCOM, calculateKineticEnergy, getNeighborsDict} from "./math_utils.js";
 import {ConstantForce,Gravity,Damping,Spring,Spring2Point,computeExternalForces} from "./forces_actuators.js";
+//lets import external dependencies: mathjs
+import * as math from 'mathjs'; 
+console.log("IMPORT OF MATH",math);
+console.log("THING")
 //IntegrateSystem(fun, x0, tf, h) where x0 is a R dim array, fun is a R->R dxdt fun 
 // integrateOdeOnTarray(fun,xo,tArray,method = "RK4")
 //h is the time step, tf is the final time, by default uses RK4

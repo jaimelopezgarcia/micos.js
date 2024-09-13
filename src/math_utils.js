@@ -1,3 +1,8 @@
+//lets import the external dependencies of this module they are: math.js, Delaunator
+
+import * as math from 'mathjs';
+import Delaunator from 'delaunator';
+
 /*
 Requires math.js to be loaded on the page
 */

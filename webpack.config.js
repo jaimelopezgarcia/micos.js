@@ -5,8 +5,21 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, 'dist'),
     filename: 'micos.bundle.js',
-    library: 'miCoS',
+    library: 'micos',
     libraryTarget: 'umd'
   },
-  mode: 'production'
+  mode: 'development',  // Use 'development' mode for easier debugging
+  devServer: {
+    static: path.join(__dirname, 'src'),  // Serve files from the 'src' folder during development
+    compress: true,
+    port: 9000,  // Port to serve the app
+    open: true,  // Automatically open in the browser
+    hot: true,   // Enable hot module replacement (live reload)
+
+  },
 };
+
+
+
+
+
