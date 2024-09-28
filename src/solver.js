@@ -4,8 +4,7 @@ import {getAngle, translate, rotate,rotateCOM, getNeighborsDelauney, calculateIn
 import {ConstantForce,Gravity,Damping,Spring,Spring2Point,computeExternalForces} from "./forces_actuators.js";
 //lets import external dependencies: mathjs
 import * as math from 'mathjs'; 
-console.log("IMPORT OF MATH",math);
-console.log("THING")
+
 //IntegrateSystem(fun, x0, tf, h) where x0 is a R dim array, fun is a R->R dxdt fun 
 // integrateOdeOnTarray(fun,xo,tArray,method = "RK4")
 //h is the time step, tf is the final time, by default uses RK4
@@ -1836,11 +1835,11 @@ function integrateSystem(STATE, nsteps, callbacksActuators = null,
     
 
     let defaultParams = {
-        "alpha": 5,
-        "beta": 5,
-        "dt": 0.01,
-        "muFriction": 0.0,
-        "collisionThreshold": 0.01,
+        "alpha": 45,
+        "beta": 45,
+        "dt": 0.001,
+        "muFriction": 0,
+        "collisionThreshold": 0.0001,
     }
 
     for (let key in defaultParams){
@@ -1937,10 +1936,10 @@ function step(STATE, PARAMETERS = {}, callbacksActuators = null){
 
 
     let defaultParams = {
-        "alpha": 20,
-        "beta": 20,
-        "dt": 0.015,
-        "muFriction": 0.3,
+        "alpha": 35,
+        "beta":35,
+        "dt": 0.01,
+        "muFriction": 0.25,
         "collisionThreshold": 0.0001,
 
     }
@@ -1972,7 +1971,7 @@ export { stepSemiEulerActiveSet, calculateCOM, calculateKineticEnergy,
             dumbellSlidingOnWallSystemConfig, dumbellSlidingOnWallAnalyticalSolution,
             rollingCircleSystemConfig, rollingCircleAnalyticalSolution, calculateInertiaMoment,
         computeJacobians, solveConstraints, stepUnpackState,
-         collisions2ContactConstraints,computeExternalForces, calculateConstraintForces,
+         collisions2ContactConstraints,computeExternalForces, calculateConstraintForces, calculateConstraintForcesFromTrajectory,
          CollisionHandler, ConstraintContact, Polygon, StateUtils, getConstraintsRigid,
          step
         };

@@ -17,6 +17,16 @@ module.exports = {
     hot: true,   // Enable hot module replacement (live reload)
 
   },
+
+  module: {
+    rules: [
+      {
+        test: /\.js$/, // Apply Babel loader to JS files        use: ['style-loader', 'css-loader'],
+        exclude: /node_modules/,
+        use: 'babel-loader'
+      }
+    ]
+  }
 };
 
 

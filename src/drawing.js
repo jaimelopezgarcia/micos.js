@@ -157,7 +157,7 @@ function drawPolygon(SVG,polygonId, points, color = "black"){
   return polygon;
 }
 
-function drawParticles(svgd3, xs, radii, groupParticlesId,color = "red") {
+function drawParticles(svgd3, xs, radii, groupParticlesId,color = "red", debug = false) {
     // Create or select the group for all particles
     // if radii is a number, we'll make it an array of the same length as xs with the same value
     if (typeof radii === "number"){
@@ -195,112 +195,23 @@ function drawParticles(svgd3, xs, radii, groupParticlesId,color = "red") {
         .attr("r", (d, i) => d.r)
         .attr("fill", color);
 
+    if (debug){
     particles.select("text")
         .attr("x", (d, i) => d.x)
         .attr("y", (d, i) => d.y)
         .text((d, i) => `${i}`);
-
+    }
     // Remove old particles (exit)
     particles.exit().remove();
   }
 
 
 
-// This function will draw the constraints between the particles
-function drawDistanceConstraintsOLD(svg, xarray, constraints_idxs,constraints_distances,
-                                 id_constraint, color = "black",labels_segments = []){
-// xarray is a [Nparticles,2] array, constraints_idxs is a [Nconstraints,2] array with the indices
-// of the particles that are connected by the constraint, and
-// constraints_distances is a [Nconstraints] array of the distances that must be enforced
-// if constraint is satisfied the distance between the particles will
-// be equal to the distance in constraints_distances
-
-// Lets create a data object 
-//{x1: x1, y1: y1, x2: x2, y2: y2, distance: distance,ratios: ratios}
-// lets adopt the convention that x2-x1 where x1 is the first particle in the constraint
-let data = [];
-for (let i = 0; i < constraints_idxs.length; i++){
-  let idxs = constraints_idxs[i];
-
-  let x1 = xarray[idxs[0]][0];
-  let y1 = xarray[idxs[0]][1];
-  let x2 = xarray[idxs[1]][0];
-  let y2 = xarray[idxs[1]][1];
-  let distance = constraints_distances[i];
-  let realdistance = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
-  // lets draw the distance constraint with the imposed distance instead of the real distance
-  // lets calculate the \vec{r} = (x2-x1,y2-y1) and the
-  let runit_x = (x2-x1)/realdistance;
-  let runit_y = (y2-y1)/realdistance;
-  let x2_imposed = x1 + runit_x*distance;
-  let y2_imposed = y1 + runit_y*distance;
-  data.push({x1: x1, y1: y1, x2: x2_imposed, y2: y2_imposed, distance: distance});
-
-}
-// lets add the class constraint +"_id_constraint" and we do the selectall over this class
-// to avoid selecting all the lines in the svg
-
-// if labels_segments is not empty, we'll check if the length is the same as the constraints_idxs
-//else we'll throw an error
-// if it is we display the labels at the segment midpoint
-let constraints = svg.selectAll(".distance_constraint_"+id_constraint).data(data);
-
-constraints.enter().append("line")
-.attr("class", "distance_constraint_"+id_constraint)
-.attr("x1", d => d.x1)
-.attr("y1", d => d.y1)
-.attr("x2", d => d.x2)
-.attr("y2", d => d.y2)
-.attr("stroke", color);
-
-constraints.attr("x1", d => d.x1)
-.attr("y1", d => d.y1)
-.attr("x2", d => d.x2)
-.attr("y2", d => d.y2)
-.attr("stroke", color);
-
-// lets add the labels  
-// first we remove the labels if they already exist
-
-if (labels_segments.length > 0){
-  if (labels_segments.length != constraints_idxs.length){
-    throw new Error("labels_segments must have the same length as constraints_idxs");
-  }
-  for (let i = 0; i < labels_segments.length; i++){
-    //lets remove the label if it already exists
-    svg.select(`#label_${id_constraint}_${i}`).remove();
-
-    let idxs = constraints_idxs[i];
-    let x1 = xarray[idxs[0]][0];
-    let y1 = xarray[idxs[0]][1];
-    let x2 = xarray[idxs[1]][0];
-    let y2 = xarray[idxs[1]][1];
-    let xmid = (x1 + x2)/2;
-    let ymid = (y1 + y2)/2;
-    let label = labels_segments[i];
-    let text = svg.append("text")
-    .attr("x", xmid)
-    .attr("y", ymid)
-    .text(label)
-    .style("text-anchor", "middle")
-    .style("font-size", "18px")
-    .attr("fill", color)
-    .attr("id", `label_${id_constraint}_${i}`);
-  }
-
-}
-
-constraints.exit().remove();
-
-
-
-return constraints;
-   }
 
    //lets try to write drawDistanceConstraints without the annoying d3, lets use plain js and svg
    //we'll keep the signature for compatibility
     function drawDistanceConstraints(svg, xarray, constraints_idxs,constraints_distances,
-                                  groupId, color = "black",labels_segments = []){
+                                  groupId, color = "black",labels_segments = [], debug = false){
 
 
       //Lets create a group where we'll place all elements, for easy removal
@@ -337,6 +248,8 @@ return constraints;
           line.setAttribute("y2", y2_imposed);
           line.setAttribute("stroke", color);
           //lets add the label if it exists
+
+          if (debug){
           if (labels_segments.length > 0){
               if (labels_segments.length != constraints_idxs.length){
                   throw new Error("labels_segments must have the same length as constraints_idxs");
@@ -357,6 +270,7 @@ return constraints;
               text.setAttribute("font-size", "18px");
               text.setAttribute("text-anchor", "middle");
           }
+        }
       }
 
     }
@@ -383,103 +297,12 @@ function drawCross(svg, x, y, size, id, color = "black") {
     .attr("stroke", color)
 
 }
-function drawPinConstraintsOld(svg, xarray, constraints_idxs,
-                            pinpoints ,distances, id_constraint, color = "black",labels_segments = []){
-  //very similar to drawDistanceConstraints but now there is only 1 particle involved
-  // xarray [Nparticles,2] array, constraints_idxs [Nconstraints] pinpoints is a [Nconstraints,2] 
-  //the other coordinates correspond to the pin point
-  // Lets throw an error if different lengths of pinpoints and constraints_idxs
-  if (constraints_idxs.length != pinpoints.length){
-    throw new Error("constraints_idxs and pinpoints must have the same length");
-  }
-  // Lets create a data object {p1:p1,p2:p2,x1:x1,x2:x2, distance: distance,ratios: ratios}
-  // Lets adopt the convention that x-p where x is the particle and p is the pin point
-  let data = [];
-  for (let i = 0; i < constraints_idxs.length; i++){
-    let idx = constraints_idxs[i];
-    let x1 = xarray[idx][0];
-    let y1 = xarray[idx][1];
-    let x2 = pinpoints[i][0];
-    let y2 = pinpoints[i][1];
-    let distance = distances[i];
-    let realdistance = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
-    // lets draw the distance constraint with the imposed distance instead of the real distance
-    // lets calculate the \vec{r} = (x2-x1,y2-y1) and the
-    let runit_x = (x2-x1)/realdistance;
-    let runit_y = (y2-y1)/realdistance;
-    let x2_imposed = x1 + runit_x*distance;
-    let y2_imposed = y1 + runit_y*distance;
-    data.push({x1: x1, y1: y1, x2i: x2_imposed, y2i: y2_imposed,
-              x2:x2,y2:y2, distance: distance});
-  }
-  // lets add the class pin_constraint +"_id_constraint" and we do the selectall over this class
-  // to avoid selecting all the lines in the svg
-  let constraints = svg.selectAll(".pin_constraint_"+id_constraint).data(data);
-
-  constraints.enter().append("line")
-  .attr("class", "pin_constraint_"+id_constraint)
-  .attr("x1", d => d.x1)
-  .attr("y1", d => d.y1)
-  .attr("x2", d => d.x2i)
-  .attr("y2", d => d.y2i)
-  .attr("stroke", color);
-
-  constraints.attr("x1", d => d.x1)
-  .attr("y1", d => d.y1)
-  .attr("x2", d => d.x2i)
-  .attr("y2", d => d.y2i)
-  .attr("stroke", color);
-
-  if (labels_segments.length > 0){
-    if (labels_segments.length != constraints_idxs.length){
-      throw new Error("labels_segments must have the same length as constraints_idxs");
-    }
-    for (let i = 0; i < labels_segments.length; i++){
-      //lets remove the label if it already exists
-      svg.select(`#label_${id_constraint}_${i}`).remove();
-      let idx = constraints_idxs[i];
-      let x1 = xarray[idx][0];
-      let y1 = xarray[idx][1];
-      let x2 = pinpoints[i][0];
-      let y2 = pinpoints[i][1];
-      let xmid = (x1 + x2)/2;
-      let ymid = (y1 + y2)/2;
-      let label = labels_segments[i];
-      let text = svg.append("text")
-      .attr("x", xmid)
-      .attr("y", ymid)
-      .text(label)
-      .style("text-anchor", "middle")
-      .style("font-size", "18px")
-      .attr("fill", color)
-      .attr("id", `label_${id_constraint}_${i}`);
-    }
-  }
-
-
-  constraints.exit().remove();
-
-  // additionally lets draw pin point with a cross, its coordinates are x2,y2
-  // using the function drawCross
-  for (let i = 0; i<data.length;i++){
-    let x2 = data[i].x2;
-    let y2 = data[i].y2;
-    let id_cross = "pin_cross_"+i;
-    drawCross(svg, x2, y2, 10, id_cross, color = "black");
-  }
-
-
-
-
-  return constraints;
-
-}
 
 
 //again, lets write drawPinConstraints without d3, lets use plain js and svg
 
 function drawPinConstraints(svg, xarray, constraints_idxs,
-                            pinpoints ,distances, groupId, color = "black",labels_segments = []){
+                            pinpoints ,distances, groupId, color = "black",labels_segments = [], debug = false){
   //very similar to drawDistanceConstraints but now there is only 1 particle involved
   // xarray [Nparticles,2] array, constraints_idxs [Nconstraints] pinpoints is a [Nconstraints,2]
   //the other coordinates correspond to the pin point
@@ -526,32 +349,35 @@ function drawPinConstraints(svg, xarray, constraints_idxs,
       line.setAttribute("y2", y2_imposed);
       line.setAttribute("stroke", color);
       //lets add the label if it exists
-      if (labels_segments.length > 0){
 
-          if (labels_segments.length != constraints_idxs.length){
+      if (debug){
+        if (labels_segments.length > 0){
 
-              throw new Error("labels_segments must have the same length as constraints_idxs");
+            if (labels_segments.length != constraints_idxs.length){
 
-          }
+                throw new Error("labels_segments must have the same length as constraints_idxs");
 
-          let xmid = (x1 + x2)/2;
-          let ymid = (y1 + y2)/2;
-          let label = labels_segments[i];
-          let text = group.querySelector(`#label_${groupId}_${i}`);
-          if (text == null){
+            }
 
-              text = newSvgElmnt(group,"text");
-              text.setAttribute("id",`label_${groupId}_${i}`);
+            let xmid = (x1 + x2)/2;
+            let ymid = (y1 + y2)/2;
+            let label = labels_segments[i];
+            let text = group.querySelector(`#label_${groupId}_${i}`);
+            if (text == null){
 
-          }
+                text = newSvgElmnt(group,"text");
+                text.setAttribute("id",`label_${groupId}_${i}`);
 
-          text.setAttribute("x", xmid);
-          text.setAttribute("y", ymid);
+            }
 
-          text.textContent = label;
-          text.setAttribute("fill", color);
-          text.setAttribute("font-size", "18px");
-          text.setAttribute("text-anchor", "middle");
+            text.setAttribute("x", xmid);
+            text.setAttribute("y", ymid);
+
+            text.textContent = label;
+            text.setAttribute("fill", color);
+            text.setAttribute("font-size", "18px");
+            text.setAttribute("text-anchor", "middle");
+        }
 
       }
 
@@ -789,7 +615,7 @@ function drawForces(STATE, svg, scaleArrows = 1.0){
   }
 
 
-  function drawConstraints(STATE, svg, constraintsGroupId = "constraints"){
+  function drawConstraints(STATE, svg, constraintsGroupId = "constraints", debug = false){
     /*
     *   Function to draw the constraints in the svg
     *   The constraints are in the STATE object
@@ -807,7 +633,7 @@ function drawForces(STATE, svg, scaleArrows = 1.0){
       //lets create labels, with the segment indices is basically an 0--nDistanceConstraints-1 array
       let labels_segments = Array.from(Array(constraints_idxs1.length).keys()).map(i => `Segd${i}`);
       let constraintsDistId = constraintsGroupId + "_distance";
-      drawDistanceConstraints(svg, xs, constraints_idxs1, distances1, constraintsDistId, "black", labels_segments);
+      drawDistanceConstraints(svg, xs, constraints_idxs1, distances1, constraintsDistId, "black", labels_segments,debug);
     }
     if (!isConsPinEmpty){
       let constraints_pin = STATE.constraints_pin;
@@ -817,7 +643,7 @@ function drawForces(STATE, svg, scaleArrows = 1.0){
       //now the labels go form nDistanceConstraints to nDistanceConstraints + nPinConstraints - 1
       let labels_segments = Array.from(Array(constraints_idxs2.length).keys()).map(i => `Segp${i}`);
       let constraintsPinId = constraintsGroupId + "_pin";
-      drawPinConstraints(svg, xs, constraints_idxs2, pinpoints, distances2, constraintsPinId, "black", labels_segments);
+      drawPinConstraints(svg, xs, constraints_idxs2, pinpoints, distances2, constraintsPinId, "black", labels_segments,debug);
     }
     
 }
@@ -829,13 +655,14 @@ class PolygonDrawer{
     * Here we pack all the functions to draw polygons in the svg, to take care of normals, transformations etc
     * It is intended to be the visual representation of the Polygon object
     */
-    constructor(svg,VerticesCanvas,polId,polygonsGroupId = "polygonsGroup", color = "blue"){
+    constructor(svg,VerticesCanvas,polId,polygonsGroupId = "polygonsGroup", color = "blue", debug = false){
       this.polygonObj = new Polygon(VerticesCanvas, polId);
       this.polygonsGroupId = polygonsGroupId;
       //polygons in the svg will have the id ${polygonGroupId}_polygon_${i} where i is the index/id of the polygon
       // any property of the polygon will be ${polygonGroupId}_polygon_${i}_attribute 
       //for instance ${polygonGroupId}_polygon_${i}_normal_${j} where j is the index of the normal
       //lets draw the polygon
+      this.debug = debug;
       this.draw(svg, color);
       
 
@@ -857,26 +684,28 @@ class PolygonDrawer{
         drawPolygon(polygonGroup,polygonGroup.id+"_polygon", points, "blue")
 
         //Lets display the id of the polygon at the center of the polygon, plain js
-        let centroid = math.mean(points,0)
-        let textId = polygonGroup.id + "_id";
-        let text = polygonGroup.querySelector(`#${textId}`);
-        if (text === null){
-          text = newSvgElmnt(polygonGroup,"text");
-          text.id = textId;
-          text.setAttribute("x",centroid[0]);
-          text.setAttribute("y",centroid[1]);
-          text.setAttribute("fill","black");
-          text.setAttribute("font-size","25px");
-          text.setAttribute("text-anchor","middle");
-          text.setAttribute("alignment-baseline","middle");
-          text.textContent = this.polygonObj.id;
-        }
 
-        
-        //lets draw the normals
-        this.drawNormals(polygonGroup, "black", scale_normal);
+        if (this.debug){
+            let centroid = math.mean(points,0)
+            let textId = polygonGroup.id + "_id";
+            let text = polygonGroup.querySelector(`#${textId}`);
+            if (text === null){
+              text = newSvgElmnt(polygonGroup,"text");
+              text.id = textId;
+              text.setAttribute("x",centroid[0]);
+              text.setAttribute("y",centroid[1]);
+              text.setAttribute("fill","black");
+              text.setAttribute("font-size","25px");
+              text.setAttribute("text-anchor","middle");
+              text.setAttribute("alignment-baseline","middle");
+              text.textContent = this.polygonObj.id;
+            }
 
+            
+            //lets draw the normals
+            this.drawNormals(polygonGroup, "black", scale_normal);
 
+      }
 
     }
 
@@ -1168,14 +997,26 @@ class Drawer{
       * springs2points: [[idx,point,springConstant,restlength]]
       * 
       */
-      constructor(svg, x_model_domain = [-3,3],
-         y_model_domain = [-3,3], origin_model = [0,0], preffixId = ""){
+      constructor(svg,options){
+
+        let defaultOptions = {
+          x_model_domain: [-3,3],
+          y_model_domain: [-3,3],
+          origin_model: [0,0],
+          preffixId: "",
+          debug: false
+        };
+        for (let key in options){
+          defaultOptions[key] = options[key];
+        }
+
         this.svg = svg;// html dom, not d3
-        this.x_model_domain = x_model_domain;
-        this.y_model_domain = y_model_domain;
-        this.origin_model = origin_model;
-        this.preffixId = preffixId? preffixId : svg.id;
+        this.x_model_domain = defaultOptions.x_model_domain;
+        this.y_model_domain = defaultOptions.y_model_domain;
+        this.origin_model = defaultOptions.origin_model;
+        this.preffixId = defaultOptions.preffixId? preffixId : svg.id;
         this._firstMakeInteractiveCall = true;
+        this.debug = defaultOptions.debug;
         
         //if prefixId is provided we'll use it, if not we get the id of the svg
       }
@@ -1469,7 +1310,7 @@ class Drawer{
       drawPolygons(svg, polygonsVertices,
                          polygonsGroupId, color = "blue"){
         for (let [index,vertices] of polygonsVertices.entries()){
-          new PolygonDrawer(svg,vertices,index,polygonsGroupId,color);
+          new PolygonDrawer(svg,vertices,index,polygonsGroupId,color,this.debug);
       }
       }
 
@@ -1568,19 +1409,21 @@ class Drawer{
         let canvasSTATE = this.state2Canvas(s);
 
         //lets draw particles
-        drawParticles(svgd3, canvasSTATE.xs, radii, particlesGroupId_full, VISUAL_OPTIONS["color_particles"]);
+        drawParticles(svgd3, canvasSTATE.xs, radii, particlesGroupId_full, VISUAL_OPTIONS["color_particles"], this.debug);
+        this.drawPolygons(this.svg, canvasSTATE.polygons, polygonsGroupId_full, VISUAL_OPTIONS["color_polygons"]);
+        drawConstraints(canvasSTATE, this.svg, constraintsGroupId_full, this.debug);
         //lets draw forces
+        if(this.debug){
         drawForces(canvasSTATE, svgd3, scaleArrowsForces);
         //lets draw constraints
-        drawConstraints(canvasSTATE, this.svg, constraintsGroupId_full);
+        
 
-        this.drawPolygons(this.svg, canvasSTATE.polygons, polygonsGroupId_full, VISUAL_OPTIONS["color_polygons"]);
 
         //lets draw the collisions
         this.drawCollisions(this.svg, canvasSTATE.new_collisions,
                             canvasSTATE.resolved_collisions,
                               particlesGroupId_full, polygonsGroupId_full);
-
+        }
         //lets draw the springs
         //we first extract the points and restLengths from both springs and springs2points, together with the restlengths, and we concatenate both sets
         let points1 = canvasSTATE.springs.map(spring => canvasSTATE.xs[spring[0]]);
@@ -1674,13 +1517,13 @@ class Drawer{
       if (typeof(mouseSpringStiffness) !== "number"){
           mouseSpringStiffness = 5;
 
-          console.warn("Mouse spring stiffness not found in STATE, defaulting to 10");
+          console.warn("Mouse spring stiffness not found in STATE, defaulting");
       }
 
       if (typeof(mouseSpringRestLength) !== "number"){
 
-          mouseSpringRestLength = 0.01;
-          console.warn("Mouse spring rest length not found in STATE, defaulting to 0.1");
+          mouseSpringRestLength = 0.5;
+          console.warn("Mouse spring rest length not found in STATE, defaulting");
       }
 
 

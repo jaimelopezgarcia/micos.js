@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+  <style>
+
+  html, body {
+        height: 100%;
+        margin: 0;
+      }
+
+
+    #svgMain {
+      border: 1px solid black;
+      width: 900px;
+      height: 900px;
+    }
+
+
+    .btn {
+      background-color: #3498DB;
+      color: white;
+      padding: 16px;
+      font-size: 16px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      background-color: #2980B9;
+    }
+
+    #controlsBar {
+      display: flex;
+      padding: 10px;
+      gap: 10px;
+    }
+
+    .dropbtn {
+    background-color: #3498DB;
+    color: white;
+    padding: 16px;
+    font-size: 16px;
+    border: none;
+    cursor: pointer;
+    }
+
+    .dropbtn:hover, .dropbtn:focus {
+    background-color: #2980B9;
+    }
+
+    .dropdown {
+    position: relative;
+    }
+
+    .dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: #f1f1f1;
+    min-width: 160px;
+    overflow: auto;
+    box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+    z-index: 1;
+    }
+
+    .dropdown-content a {
+    color: black;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    }
+
+    .dropdown a:hover {background-color: #ddd;}
+
+
+</style>
+  </style>
+  <head>
+    <title>Constraint Solver Test RealTime</title>
+  </head>
+  <body>
+    <div id = "controlsBar">
+      <div id="dropdown">
+        <button onclick="onclickToggleOptions()" class="dropbtn">Systems </button>
+        <div id="dropdownTestSystems" class="dropdown-content"></div>
+      </div>
+
+      <button onclick="onclickToggleDebug()" class="btn">Debug</button>
+    </div>
+
+
+    <svg id="svgMain">
+     </svg>
+
+
+
+     <script src = "micos.bundle.js"></script>
+
+    <script>
+
+let DEBUG = false;
+let STATE = {};
+let intervalId = null;
+let SVG = document.getElementById("svgMain");
+let PLAYER = new micos.Player(SVG);
+
+function _clearOnClick(intervalId,svg){
+        if (intervalId){
+          clearInterval(intervalId);
+        }
+        while (svg.firstChild) {
+            svg.removeChild(svg.firstChild);
+        }
+      }
+function onclickToggleDebug(){
+  console.log("Debug");
+  
+}
+
+function onclickToggleOptions() {
+      var dropdown = document.getElementById("dropdownTestSystems");
+      if (dropdown.style.display === "block") {
+        dropdown.style.display = "none";
+      } else {
+        dropdown.style.display = "block";
+      }
+    }
+
+  window.onclick = function(event){
+
+    if (!event.target.matches(".dropbtn")){
+    var dropdown = document.getElementById("dropdownTestSystems");
+    dropdown.style.display = "none";
+  }
+  }
+   function populateDropdownTestSystem(){
+     let svg = document.getElementById("svgMain");  
+     let dropDiv = document.getElementById("dropdownTestSystems");
+     let options = [ "double pendulum","quintuple pendulum","coupled double pendulum", 
+     "spider","Compass Walker","bungee jumper"];
+     let default_option = "quintuple pendulum";
+
+      for(let i = 0; i < options.length; i++){
+        let a = document.createElement("a");
+        a.innerHTML = options[i];
+        a.href = "#";
+
+        if (options[i] == "Compass Walker"){
+            a.onclick = function(){
+                     
+                    STATE = micos.test_systems.compassWalkerState(4.15);
+                    //lets clear the svg
+                    //_clearOnClick(intervalId,svg);
+                  //  intervalId = micos.play(svg,STATE);
+                  let options = {dt: 0.005};
+                  console.info("Playing Compass Walker");
+                    PLAYER.play(STATE);
+
+
+                }
+              }
+
+        else if (options[i] == "bungee jumper"){
+
+            a.onclick = function(){
+                    STATE = micos.test_systems.bungeeJumperState();
+                  //  _clearOnClick(intervalId,svg);
+                  //  intervalId = micos.play(svg,STATE);
+                  console.info("Playing Bungee Jumper");
+                  let options = {dt: 0.002};
+                    PLAYER.play(STATE);
+                          
+
+              }
+            }
+        else if (options[i] == "double pendulum"){
+            a.onclick = function(){
+                    STATE = micos.test_systems.doublePendulumSystemConfig(3,0, 0, 0, 1, 1, 1, 1, 1);
+                  //  _clearOnClick(intervalId,svg);
+                  //  intervalId = micos.play(svg,STATE);
+                  console.info("Playing Double Pendulum");
+                  let options = {dt: 0.001};
+                    PLAYER.play(STATE);
+                          
+              }
+            }
+
+          else if (options[i] == "quintuple pendulum"){
+            a.onclick = function(){
+                    STATE = micos.test_systems.chainSystemConfig(5, 1, 0.5, 1, 5);
+                  //  _clearOnClick(intervalId,svg);
+                  //  intervalId = micos.play(svg,STATE);
+                  console.info("Playing Double Pendulum");
+                  let options = {dt: 0.001};
+                    PLAYER.play(STATE,options);
+                          
+              }
+            }
+
+            else if (options[i]== 'coupled double pendulum'){
+              a.onclick = function(){
+                STATE = micos.test_systems.coupledDoublePendulum();
+                PLAYER.play(STATE);
+              }
+            }
+        else if (options[i] == "spider"){
+            a.onclick = function(){
+                    STATE = micos.test_systems.spiderState(1);
+                  //  _clearOnClick(intervalId,svg);
+                   // intervalId =micos.play(svg,STATE);
+                    PLAYER.play(STATE);
+                          }
+
+                          
+              }
+
+              
+
+          if (options[i] == default_option){
+            a.click();
+          }
+              
+
+        dropDiv.appendChild(a);
+      }
+
+   }
+
+    window.onload = function(){
+
+      console.log("Starting");
+        let svg = document.getElementById("svgMain");
+
+        populateDropdownTestSystem();
+    }
+    
+
+
+
+        </script>
+    </body>
+</html>
