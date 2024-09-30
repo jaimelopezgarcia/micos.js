@@ -68,6 +68,49 @@ function compassWalkerState(groundAngle= 4.2){
 
 }
 
+
+function rigidDoublePendulum(){
+    //lets make a double pendulum  but with a square replacing the masses
+
+    let xs = [[0,0],[1,0],[1,-1],[0,-1]];
+    let pinPoint = [0,1];
+    let constraints_distance = getConstraintsRigid(xs);
+    //lets add a triangle attached to  the 3 mass of the square
+
+    let triangle = [[1,-2],[1,-3],[0,-2.5]];
+    let extra_constraints_distance = [[2,4,1],[4,5,1],[5,6,1],[6,4,1]];
+    constraints_distance = constraints_distance.concat(extra_constraints_distance);
+    xs = xs.concat(triangle);
+
+
+    //lets rotate xs
+    xs = micos.math_utils.rotate(xs,130,xs[0]);
+    xs = micos.math_utils.translate(xs,[0,1]);
+    let masses = [1,1,1,1,1,1,1];
+    let constraints_pin = [[0,pinPoint,1]];
+    let gravity = [1,[0,-1]];
+    let time = 0;
+    let dampingCoef = 0.04;
+    let initialState = {
+        xs: xs,
+        vs: [[0,0],[0,0],[0,0],[0,0],[0,0],[0,0],[0,0]],
+        masses: masses,
+        constraints_distance: constraints_distance,
+        constraints_pin: constraints_pin,
+        gravity: gravity,
+        time: time,
+        damping : xs.map((x,i) => [[i],dampingCoef]),
+        }
+
+    return initialState;
+
+
+
+}
+
+
+
+
 function bungeeJumperState(){
     //a couple of masses for feet knees, a big hip and torso a head and two arms
     // the arms are pinned to the torso, and a spring is attached to the feet ( upside down)
@@ -86,13 +129,13 @@ function bungeeJumperState(){
     xs = micos.math_utils.translate(xs,[0,3]);
 
     //lets scale down the xs
-    xs = micos.math_utils.scale(xs,0.5,0.5);
+    xs = micos.math_utils.scale(xs,0.7,0.7);
 
-    let constraints_distance = [[0,1,0.5],[1,4,0.5],[2,3,0.5],[3,4,0.5],[4,5,0.5],[5,6,0.5],[5,7,0.5],[5,8,0.5]];
+    let constraints_distance = [[0,1,0.7],[1,4,0.7],[2,3,0.7],[3,4,0.7],[4,5,0.7],[5,6,0.7],[5,7,0.7],[5,8,0.7]];
 
     let masses = [1,1,1,1,5,5,3,1,1];
 
-    let dampingCoef = 0.05;
+    let dampingCoef = 0.07;
 
     //no ground
 
@@ -100,7 +143,7 @@ function bungeeJumperState(){
 
     // a simple spring to point attached to the left foot and  to 0,0
     //springs2points must be like [[idx1,fixed_point, spring_constant, rest_length],...
-    let springs2points = [[0,[0,4],8,1]];
+    let springs2points = [[0,[0,4],5,1]];
 
     let STATE = {
 
@@ -111,7 +154,7 @@ function bungeeJumperState(){
         "constraints_pin": [],
         "polygons": polygons,
         "t":0,
-        "gravity": [1.4,[0,-1]],
+        "gravity": [1,[0,-1]],
         "springs": [],//particle1, particle2, stiffness, restLength
         "damping": xs.map((x,i) => [[i],dampingCoef]),
         "springs2points": springs2points,
@@ -520,4 +563,4 @@ function rollingCircleSystemConfig(nparticles, radius,g, omega,mass = 1){
 
 export {compassWalkerState, rollingCircleSystemConfig, tumblingBoxSystemConfig,
      pendulumSystemConfig, doublePendulumSystemConfig, chainSystemConfig, dumbellSlidingOnWallSystemConfig,
-    spiderState, dumbellSlidingOnWallAnalyticalSolution, coupledDoublePendulum, bungeeJumperState};
+    spiderState, dumbellSlidingOnWallAnalyticalSolution, coupledDoublePendulum, bungeeJumperState, rigidDoublePendulum};

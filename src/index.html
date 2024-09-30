@@ -83,7 +83,6 @@
         <div id="dropdownTestSystems" class="dropdown-content"></div>
       </div>
 
-      <button onclick="onclickToggleDebug()" class="btn">Debug</button>
     </div>
 
 
@@ -134,7 +133,7 @@ function onclickToggleOptions() {
    function populateDropdownTestSystem(){
      let svg = document.getElementById("svgMain");  
      let dropDiv = document.getElementById("dropdownTestSystems");
-     let options = [ "double pendulum","quintuple pendulum","coupled double pendulum", 
+     let options = [ "double pendulum","quintuple pendulum","rigid quadruple pendulum","coupled double pendulum", 
      "spider","Compass Walker","bungee jumper"];
      let default_option = "quintuple pendulum";
 
@@ -157,6 +156,20 @@ function onclickToggleOptions() {
 
                 }
               }
+
+        else if (options[i] == "rigid quadruple pendulum"){
+            a.onclick = function(){
+                    STATE = micos.test_systems.rigidDoublePendulum();
+                  //  _clearOnClick(intervalId,svg);
+                  //  intervalId = micos.play(svg,STATE);
+                  console.info("Playing Square Double Pendulum");
+                  let options = {dt: 0.001};
+                    PLAYER.play(STATE);
+                          
+              }
+            }
+
+
 
         else if (options[i] == "bungee jumper"){
 
