@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+  <style>
+
+  html, body {
+    height: 100%;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+      }
+
+
+    #svgMain {
+        top: 0;
+        left: 0;
+        width: 70vh;
+        height: 70vh;
+        max-width: 95vw; /* Ensure it doesn't exceed viewport height */
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 0; /* Makes sure it's in the background */
+        border: 2px solid #000; /* optional border */
+
+    }
+
+
+    .btn {
+      background-color: #3498DB;
+      color: white;
+      padding: 16px;
+      font-size: 16px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      background-color: #2980B9;
+    }
+
+    #controlsBar {
+      display: flex;
+      padding: 10px;
+      gap: 10px;
+    }
+
+    .dropbtn {
+    background-color: #3498DB;
+    color: white;
+    padding: 16px;
+    font-size: 16px;
+    border: none;
+    cursor: pointer;
+    }
+
+    .dropbtn:hover, .dropbtn:focus {
+    background-color: #2980B9;
+    }
+
+    .dropdown {
+    position: relative;
+    }
+
+    .dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: #f1f1f1;
+    min-width: 160px;
+    overflow: auto;
+    box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+    z-index: 1;
+    }
+
+    .dropdown-content a {
+    color: black;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    }
+
+    .dropdown a:hover {background-color: #ddd;}
+
+
+</style>
+  </style>
+  <head>
+    <title>Constraint Solver Test RealTime</title>
+  </head>
+  <body>
+
+
+    <svg id="svgMain">
+     </svg>
+
+     <canvas id = "canvasPlots" width="800" height="600"></canvas>
+
+
+
+     <script src = "micos.bundle.js"></script>
+
+    <script>
+
+let DEBUG = false;
+let intervalId = null;
+let SVG = document.getElementById("svgMain");
+
+
+
+
+    function plotXY(xArray, tArray, canvasId) {
+                const canvas = document.getElementById(canvasId);
+                const ctx = canvas.getContext("2d");
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                const width = canvas.width;
+                const height = canvas.height;
+
+                const margin = { top: 20, bottom: 20, left: 40, right: 20 };
+
+
+                const plotWidth = width - margin.left - margin.right;
+                const plotHeight = height - margin.top - margin.bottom;
+
+                const xMin = Math.min(...xArray);
+                const xMax = Math.max(...xArray);
+                const tMin = Math.min(...tArray);
+                const tMax = Math.max(...tArray);
+
+                const xScale = (t) => margin.left + ((t - tMin) / (tMax - tMin)) * plotWidth;
+                const yScale = (x) => margin.top + plotHeight - ((x - xMin) / (xMax - xMin)) * plotHeight;
+
+                const yTicks = 5;
+                for (let i = 0; i <= yTicks; i++) {
+                    const value = xMin + (i / yTicks) * (xMax - xMin);
+                    const y = yScale(value);
+
+                    ctx.beginPath();
+                    ctx.moveTo(margin.left, y);
+                    ctx.lineTo(margin.left - 5, y);
+                    ctx.stroke();
+
+                    ctx.fillText(value.toFixed(2), margin.left - 30, y + 5);
+                }
+
+                ctx.beginPath();
+                for (let i = 0; i < xArray.length; i++) {
+                    const xPlot = xScale(tArray[i]);
+                    const yPlot = yScale(xArray[i]);
+
+                    if (i === 0) {
+                        ctx.moveTo(xPlot, yPlot);
+                    } else {
+                        ctx.lineTo(xPlot, yPlot);
+                    }
+                }
+                ctx.strokeStyle = "blue";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+        }
+
+
+
+
+
+
+      console.log("Starting");
+        let svg = document.getElementById("svgMain");
+
+        let STATE = micos.test_systems.chainSystemConfig(5, 1, 0.5, 1, 5);
+        console.info("Playing Double Pendulum");
+        let PARAMETERS = {dt: 0.01};
+
+        let drawer = new micos.Drawer(svg);
+        drawer.drawState(STATE);
+
+        let stateStory = []
+
+        for (let i = 0; i < 1600; i++){
+          stateStory.push(JSON.parse(JSON.stringify(STATE) ));
+          micos.step(STATE, PARAMETERS);
+          drawer.drawState(STATE);
+        }
+
+        //lets create a slider that allows us to select the state to draw
+        let slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = 0;
+        slider.max = stateStory.length-1;
+        slider.value = 0;
+        slider.oninput = function(){
+          let index = parseInt(slider.value);
+          let state = stateStory[index];
+          drawer.drawState(state);
+        }
+
+        document.body.appendChild(slider);
+
+
+        //lets plot the velocity module of the first particle
+        let getVmodule = (stateStory) =>{
+          let vModule = stateStory.map((state) => {
+            let v = state.vs[3];
+            return Math.sqrt(v[0]*v[0] + v[1]*v[1]);
+          });
+
+          return vModule;
+        }
+
+        let tArray = stateStory.map((state, i) => i*PARAMETERS.dt);
+
+        let vModule = getVmodule(stateStory);
+
+        plotXY(vModule, tArray, "canvasPlots");
+
+
+    
+    
+
+
+
+        </script>
+    </body>
+</html>

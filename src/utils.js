@@ -98,13 +98,21 @@ function capDecimalsArray(array, decimals = 3) {
   }
   
 
-function getSvgRelativeCoords(svg, xabs, yabs){
+function getSvgRelativeCoordsOLD(svg, xabs, yabs){
   let rect = svg.getBoundingClientRect();
   let [xoffset, yoffset] = [rect.x, rect.y];
   let [xsvg, ysvg] = [xabs - xoffset, yabs - yoffset];
   return [xsvg, ysvg];
 }
+function getSvgRelativeCoords(svg, xabs, yabs) {
+  let point = svg.createSVGPoint();  
+  point.x = xabs;  
+  point.y = yabs;  
 
+  let svgCoords = point.matrixTransform(svg.getScreenCTM().inverse());
+
+  return [svgCoords.x, svgCoords.y];  
+}
 
 function displayMouseCoords(svg,  canvas2ModelCallback = null,div_output_id = null) {
   svg.addEventListener("mousemove", function(event) {

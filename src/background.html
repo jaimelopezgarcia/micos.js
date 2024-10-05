@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+  <style>
+
+  html, body {
+    height: 100%;
+            margin: 0;
+            justify-content: center;
+            align-items: center;
+      }
+
+
+      #svgMain {
+            position: fixed;
+            width: 100vh;
+            height: 100vh;
+            max-width: 95vw;
+            max-height: 95vh;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1;
+            border: 1px solid black;
+        }
+
+
+
+</style>
+  </style>
+  <head>
+    <title>Constraint Solver Test RealTime</title>
+  </head>
+  <body>
+
+
+
+    <svg id="svgMain" class="svg-drawing"  viewBox="-2000 -2000 8500 8000">
+    </svg>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.4.4/math.js"></script>
+     <script src = "micos.bundle.js"></script>
+
+    <script>
+
+let DEBUG = false;
+let STATE = {};
+let intervalId = null;
+let SVG = document.getElementById("svgMain");
+let PLAYER = new micos.Player(SVG);
+
+
+function compassWalkerState(groundAngle= 4.2){
+    //Simple gated compas walker, basically 3 masses with 2 distance constraints
+    // when one of the masses contacts the ground, its dynamics are the same as an inverted double pendulum
+    //if springActuator is not null, it must be a SpringActuator object, and we create a cos(t) contraction function as in the example
+
+    //lets add two extra masses as rigid knees, just to attach the springActuator
+
+    let initialAngleDeg = 36;
+    let initialAngle = initialAngleDeg*Math.PI/180;
+    let uVec = [Math.cos(initialAngle), -Math.sin(initialAngle)];
+    let legLength = 3.7;
+    let xs = [[0,0],
+              [0,legLength],
+              [legLength*uVec[0],legLength*uVec[1]+legLength],
+            ];
+
+    
+
+    //lets rotate the xs 20º around the first particle
+
+    xs = micos.math_utils.rotate(xs,4,xs[0]);
+    // lets translate the xs to the left
+    xs = micos.math_utils.translate(xs,[-0.5,-0.3]);
+    // now lets add the distance constraints between [[0,1],[0,2],[1,2],[2,3],[2,4],[3,4]]
+
+    let constraints_distance = [[0,1,legLength],
+                                [1,2,legLength]
+                            ];
+
+    let masses = [4,4,4];
+    masses = masses.map((m) => m*3);
+
+    //lets make the head ( second mass) be attached to a string of masses
+    //itself to some mass fixed to a pin point
+    let pinPoint = [xs[1][0]+4,xs[1][1]+1];
+    //lets make the masses be evenly spaced between xs[1] and the pinPoint
+    let nMasses = 12;
+    let masses2 = Array(nMasses).fill(1);
+    let rVec = math.subtract(pinPoint,[xs[1][0]-1,xs[1][1]]);
+    let r = math.norm(rVec);
+    let uVec2 = math.divide(rVec,r);
+    let delta = r/(nMasses+2);
+    let xs2 = Array(nMasses).fill(0).map((_,i) => math.add(xs[1],math.multiply(uVec2,(i+1)*delta)));
+
+    xs = xs.concat(xs2);
+    //we have to add distance constraints between the head ( idx1) and the masses
+    //idxs 3,4...nMasses+2
+    let springs = [[1,3,22,0.5*legLength]];
+   //let springs = [];
+   // let constraint_distance_head_mass = [];
+    let constraints_distance_string = masses2.map((_,i) => [i+3,i+4,delta]);
+   // constraints_distance = constraints_distance.concat([constraint_distance_head_mass])
+    //lets remove the last constraint
+    constraints_distance_string.pop();
+
+    //constraints_distance = constraints_distance.concat([constraint_distance_head_mass]) 
+    constraints_distance = constraints_distance.concat(constraints_distance_string);
+
+    masses = masses.concat(masses2);
+
+    let pinCstr = [nMasses+2,pinPoint,1];
+
+
+    // lets create a wide ground polygon that spans from -4 to 4 in x and -1 to -0.5 in y, and rotate it 20º
+
+    // lets create the polygon in clockwise order
+    let ground = [[-4,-1],[-4,-0.5],[4,-0.5],[4,-1]];
+    ground = micos.math_utils.rotateCOM(ground, groundAngle);
+    ground = micos.math_utils.translate(ground,[-2,0]);
+    let polygons = [ground];
+    let dampingCoef = 0.8;
+    //lets add damping to the string, not the compass walker
+    // xs.map((x,i) => [[i],dampingCoef]) damping is an array of format [[[idx],dampingCoefidx],...]
+    let damping = xs2.map((_,i) => [[i+3],dampingCoef]);
+    let STATE = {
+        "xs": xs,
+        "vs": xs.map((x) => {return [0,0]}),
+        "masses": masses,
+        "constraints_distance": constraints_distance,
+        "constraints_pin": [ pinCstr],
+        "polygons": polygons,
+        "t":0,
+        "gravity": [2.7,[0,-1]],
+        "springs": springs,
+        "damping":damping,
+
+    };
+
+    return STATE
+
+
+
+}
+
+
+
+    window.onload = function(){
+
+      console.log("Starting");
+        let svg = document.getElementById("svgMain");
+
+       STATE = compassWalkerState();
+       let PARAMETERS = {dt: 0.01};
+
+       PLAYER.play(STATE,PARAMETERS);
+
+
+    }
+    
+
+
+
+        </script>
+    </body>
+</html>

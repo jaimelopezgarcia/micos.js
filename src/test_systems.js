@@ -3,7 +3,68 @@ import * as math from 'mathjs';
 import { getConstraintsRigid } from "./solver.js";
 import {translate, rotate} from "./math_utils.js";
 
-function compassWalkerState(groundAngle= 4.2){
+function compassWalkerState(){
+    //Simple gated compas walker, basically 3 masses with 2 distance constraints
+    // when one of the masses contacts the ground, its dynamics are the same as an inverted double pendulum
+    //if springActuator is not null, it must be a SpringActuator object, and we create a cos(t) contraction function as in the example
+
+    //lets add two extra masses as rigid knees, just to attach the springActuator
+
+    let initialAngleDeg = 43;
+    let initialAngle = initialAngleDeg*Math.PI/180;
+    let uVec = [Math.cos(initialAngle), -Math.sin(initialAngle)];
+    let legLength = 2.7;
+    let xs = [[0,0],
+              [0,legLength],
+              [legLength*uVec[0],legLength*uVec[1]+legLength],
+            ];
+    
+    
+    
+    //lets rotate the xs 20º around the first particle
+    
+    xs = micos.math_utils.rotate(xs,4,xs[0]);
+    // lets translate the xs to the left
+    xs = micos.math_utils.translate(xs,[-0.5,-0.3]);
+    // now lets add the distance constraints between [[0,1],[0,2],[1,2],[2,3],[2,4],[3,4]]
+    
+    let constraints_distance = [[0,1,legLength],
+                                [1,2,legLength]
+                            ];
+    
+    let masses = [3,3,3];
+    masses = masses.map((m) => m*1);
+    let ground = [[-4,-1],[-4,-0.5],[4,-0.5],[4,-1]];
+    ground = micos.math_utils.rotateCOM(ground,4);
+    let dampingCoef = 0.000;
+    //lets translate xs and ground to the left
+    xs = micos.math_utils.translate(xs,[-2.5,-0.3]);
+    ground = micos.math_utils.translate(ground,[-2.5,-0.3]);
+    let polygons = [ground];
+
+    let STATE = {
+        "xs": xs,
+        "vs": xs.map((x) => {return [0,0]}),
+        "masses": masses,
+        "constraints_distance": constraints_distance,
+        "constraints_pin": [],
+        "polygons": polygons,
+        "t":0,
+        "gravity": [1,[0,-1]],
+        "springs": [],//particle1, particle2, stiffness, restLength
+        "damping": xs.map((x,i) => [[i],dampingCoef]),
+
+    };
+
+    return STATE
+
+
+
+}
+
+
+
+function compassWalkerState2(groundAngle= 4.2){
     //Simple gated compas walker, basically 3 masses with 2 distance constraints
     // when one of the masses contacts the ground, its dynamics are the same as an inverted double pendulum
     //if springActuator is not null, it must be a SpringActuator object, and we create a cos(t) contraction function as in the example
@@ -90,7 +151,7 @@ function rigidDoublePendulum(){
     let constraints_pin = [[0,pinPoint,1]];
     let gravity = [1,[0,-1]];
     let time = 0;
-    let dampingCoef = 0.04;
+    let dampingCoef = 0.01;
     let initialState = {
         xs: xs,
         vs: [[0,0],[0,0],[0,0],[0,0],[0,0],[0,0],[0,0]],
@@ -529,11 +590,11 @@ function rollingCircleSystemConfig(nparticles, radius,g, omega,mass = 1){
         let gravity = [g, [0,-1]];
         let time = 0;
         constraints_pin.push([0, [0,0], L]);
-        let dampingCoef = 0.05;
+        let dampingCoef = 0.03;
         for (let i = 0; i < nparticles; i++){
     
             // lets add a little angle perturbation to avoid singular configurations
-            let angle_perturbation = 0.01*Math.random()+angle;
+            let angle_perturbation = angle;
             let x = [(i+1)*L*Math.cos(angle_perturbation), -(i+1)*L*Math.sin(angle_perturbation)];
             let v = [0,0];
             x0.push(x);

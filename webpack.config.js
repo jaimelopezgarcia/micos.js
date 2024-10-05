@@ -24,7 +24,12 @@ module.exports = {
         test: /\.js$/, // Apply Babel loader to JS files        use: ['style-loader', 'css-loader'],
         exclude: /node_modules/,
         use: 'babel-loader'
-      }
+      },
+      
+      {
+        test: /\.css$/i,      // CSS rule to handle .css files
+        use: ['style-loader', 'css-loader'],
+      },
     ]
   }
 };

@@ -9,5 +9,8 @@ import * as test_systems from "./test_systems.js";
 
 import * as solver from "./solver.js";
 
+import './styles.css';
+
+
 export {step, Drawer, Player, StateUtils, math_utils, test_systems, solver};
 

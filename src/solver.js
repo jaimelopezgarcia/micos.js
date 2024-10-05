@@ -1056,6 +1056,15 @@ function stepSemiEulerActiveSet(STATE,PARAMETERS, callbacksActuators = null){
 
     let dt = PARAMETERS.dt;
     let newVs = math.add(s.vs, math.multiply(dt,acc));
+
+    //lets clip the velocities for stability to < 6 in module
+    newVs = newVs.map(v => {
+        let mod = math.norm(v);
+        if (mod > 4){
+            return math.multiply(4/mod,v);
+        }
+        return v;
+    }); 
     let newxs = math.add(s.xs, math.multiply(dt,newVs));
 
     let colHandler = new CollisionHandler();

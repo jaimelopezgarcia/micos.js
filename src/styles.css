@@ -1,66 +1,114 @@
-.dashboard {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    grid-gap: 10px;
-}
-.panel {
-    border: 1px solid #ccc;
-    padding: 10px;
-    overflow-y: auto;
-}
-.main-panel {
-    grid-area: 2 / 2 / 5 / 4;
-}
-.display-svg {
-    border: 1px solid red;
+html, body {
+height: 100%;
+        margin: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
 
-
-}
-.plots-panel {
-    grid-area: 1 / 2 / 2 / 4;
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    max-height: 300px;
-    max-width: 800px;
-    overflow-x: auto;
-
-}
-.controls-panel {
-    grid-area: 1 / 1 / 3 / 2;
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-}
-.parameters-panel {
-    grid-area: 3 / 1 / 5 / 2;
-    max-height: 300px;
-
+/* Styling for particles */
+circle {
+stroke: #2E7D32;
+stroke-width: 2;
+fill: radial-gradient(circle at 70% 70%, #ffffff, #4CAF50, #2E7D32) !important; /* Shiny gradient */
+filter: drop-shadow(0 0 14px rgba(0, 0, 0, 0.6)) !important; /* Add some shadow for depth */
 
 }
 
+/* Styling for polygons (ground/fixed elements) */
+polygon {
+fill: linear-gradient(180deg, #795548 0%, #3E2723 100%);
+stroke: #4E342E;
+stroke-width: 10;
+filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.5));
+}
+
+/* Targeting both `g` elements and `line` elements within the IDs that contain 'constraintsGroup' */
+
+/* For constraint groups */
+g[id*="constraintsGroup"] {
+/* If you want to style the group as a whole, like adding a filter */
+filter: drop-shadow(0 0 5px rgba(0,0,0,0.4)) !important;
+}
+
+/* For lines inside constraint groups */
+g[id*="constraintsGroup"] line {
+stroke: #607D8B ;
+stroke-width: 25 ;
+stroke-dasharray: 5, 5 ;
+transition: stroke 0.3s ease, stroke-width 0.3s ease ;
+}
+
+/* Hover effect for lines inside constraint groups */
 
 
-.label-input {
+
+.svg-drawing {
+    top: 0;
+    left: 0;
+    width: 90vh;
+    height: 90vh;
+    max-width: 95vw; /* Ensure it doesn't exceed viewport height */
     display: flex;
-    flex-direction: row;
-    justify-content: space-between;
-}
-.debug-info-panel {
-    grid-area: 5 / 1 / 6 / 2;
-    overflow-y: auto;
-    max-height: 300px;
-}
-/* lets add a secondary display panel right to debug info */
-.secondary-display-panel {
-    grid-area: 5 / 2 / 6 / 4;
-    overflow-y: auto;
-    max-height: 400px;
-}
-.systems-panel {
-    grid-area: 1 / 4 / 2 / 5;
-}
+    justify-content: center;
+    align-items: center;
+    z-index: 0; /* Makes sure it's in the background */
+    border: 2px solid #000; /* optional border */
 
-.visual-options-panel {
-    grid-area: 2 / 4 / 3 / 5;
 }
 
 
+.btn {
+    background-color: #3498DB;
+    color: white;
+    padding: 16px;
+    font-size: 16px;
+    border: none;
+    cursor: pointer;
+}
+
+.btn:hover {
+    background-color: #2980B9;
+}
+
+#controlsBar {
+    display: flex;
+    padding: 10px;
+    gap: 10px;
+}
+
+.dropbtn {
+background-color: #3498DB;
+color: white;
+padding: 16px;
+font-size: 16px;
+border: none;
+cursor: pointer;
+}
+
+.dropbtn:hover, .dropbtn:focus {
+background-color: #2980B9;
+}
+
+.dropdown {
+position: relative;
+}
+
+.dropdown-content {
+display: none;
+position: absolute;
+background-color: #f1f1f1;
+min-width: 160px;
+overflow: auto;
+box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+z-index: 1;
+}
+
+.dropdown-content a {
+color: black;
+padding: 12px 16px;
+text-decoration: none;
+display: block;
+}
+
+.dropdown a:hover {background-color: #ddd;}

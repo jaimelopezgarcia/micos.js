@@ -1000,8 +1000,8 @@ class Drawer{
       constructor(svg,options){
 
         let defaultOptions = {
-          x_model_domain: [-3,3],
-          y_model_domain: [-3,3],
+          x_model_domain: [-1,1],
+          y_model_domain: [-1,1],
           origin_model: [0,0],
           preffixId: "",
           debug: false
@@ -1386,7 +1386,7 @@ class Drawer{
 
 
         let defaultVisualOptions = {
-          particle_density: 0.005,
+          particle_density: 0.0005,
           scale_arrows_forces: 1.0,
           color_particles: "red",
           color_polygons: "blue",

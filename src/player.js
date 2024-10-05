@@ -71,7 +71,7 @@ class Profiler {
 
 
 class Player {
-    constructor(svg) {
+    constructor(svg, storeStory = false) {
         this.svg = svg;
         this.isPaused = false;
         this.isInit = false;
@@ -79,6 +79,8 @@ class Player {
         this.STATE = null;
         this.drawer = null;
         this.animationId = null;  // Store the animation ID to cancel the loop
+        this.storeStory = storeStory;
+        this.stateStory = [];
     }
 
     _playInit() {
@@ -110,6 +112,10 @@ class Player {
 
             // Run the simulation steps as needed
             while (simTimeAccumulator >= dt) {
+                if (this.storeStory){
+                    this.stateStory.push(this.STATE);
+                    this.stateStory.slice(-1000);
+                }
                 step(this.STATE, { "dt": dt });  // Dynamic STATE reference
                 simTimeAccumulator -= dt;
             }
@@ -132,8 +138,8 @@ class Player {
         this.STATE = STATE;
 
         let defaultOptions = {
-            "dt": 0.005,
-            "ratioSimTimeToRealTime": 2,
+            "dt": 0.008,
+            "ratioSimTimeToRealTime": 2.5,
             "targetFPS": 60,
             "debug": false,
         };
@@ -174,90 +180,7 @@ class Player {
     }
 }
 
-function plotstateStory(stateStory){
 
-    let stateUtils = new StateUtils();//we'll use the getNormalizedConstraintViolations(STATE) to plot the const errors
-
-    let layout = {
-        title: 'State Story',
-        xaxis: {
-          title: 'Time'
-        },
-        yaxis: {
-          title: 'Value'
-        }
-      };
-
-    let i = 0;
-    let xi = stateStory.map(state => state.xs[i][0]);
-    let yi = stateStory.map(state =>  state.xs[i][1]);
-    let vxi = stateStory.map(state =>  state.vs[i][0]);
-    let vyi = stateStory.map(state =>  state.vs[i][1]);
-
-
-    let time = stateStory.map(state =>  state.time);
-
-    let vars = [xi,yi,vxi,vyi];
-    let names = ["x","y","vx","vy"];
-
-    let traces = [];
-    for (let i = 0; i<vars.length;i++){
-
-        let xdata = time;
-        let ydata = vars[i];
-
-        traces.push({
-            x: xdata,
-            y: ydata,
-            mode: 'lines',
-            name: names[i]
-        });
-        
-    }
-
-
-    let plotDiv = document.getElementById("plotlyDiv1");
-    if (plotDiv==null){
-        plotDiv = document.createElement("div");
-        plotDiv.id = "plotlyDiv1";
-        document.body.appendChild(plotDiv);
-    }
-
-    Plotly.newPlot('plotlyDiv1', traces, layout);
-
-
-
-    let constErrors = stateStory.map(state => stateUtils.getNormalizedConstraintViolations(state));
-    //constErrors is a nsteps x nconstraints array we have to create nconstraints traces
-    let nConst = constErrors[0].length;
-    let tracesConst = [];
-
-    for (let i = 0;i<nConst;i++){
-        let trace = constErrors.map((errors) => errors[i]);
-        let xdata = time;
-        let ydata = trace;
-
-        tracesConst.push({
-            x: xdata,
-            y: ydata,
-            mode: 'lines',
-            name: "Constraint "+i
-        });
-
-
-
-        }
-
-    let plotDivConst = document.getElementById("plotlyDiv2");
-    if (plotDivConst==null){
-        plotDivConst = document.createElement("div");
-        plotDivConst.id = "plotlyDiv2";
-        document.body.appendChild(plotDivConst);
-    }
-
-    Plotly.newPlot('plotlyDiv2', tracesConst, layout);
-
-    }
 
 
 
