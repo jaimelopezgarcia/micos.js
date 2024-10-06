@@ -6,35 +6,27 @@ module.exports = {
     path: path.resolve(__dirname, 'dist'),
     filename: 'micos.bundle.js',
     library: 'micos',
-    libraryTarget: 'umd'
+    libraryTarget: 'umd',
   },
-  mode: 'development',  // Use 'development' mode for easier debugging
+  mode: 'development',
   devServer: {
-    static: path.join(__dirname, 'src'),  // Serve files from the 'src' folder during development
+    static: path.join(__dirname, '/'),
     compress: true,
-    port: 9000,  // Port to serve the app
-    open: true,  // Automatically open in the browser
-    hot: true,   // Enable hot module replacement (live reload)
-
+    port: 9000,
+    open: true,
+    hot: true,
   },
-
   module: {
     rules: [
       {
-        test: /\.js$/, // Apply Babel loader to JS files        use: ['style-loader', 'css-loader'],
+        test: /\.js$/,
         exclude: /node_modules/,
-        use: 'babel-loader'
+        use: 'babel-loader',
       },
-      
       {
-        test: /\.css$/i,      // CSS rule to handle .css files
+        test: /\.css$/i,
         use: ['style-loader', 'css-loader'],
       },
-    ]
-  }
+    ],
+  },
 };
-
-
-
-
-
