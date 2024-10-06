@@ -7,6 +7,7 @@ module.exports = {
     filename: 'micos.bundle.js',
     library: 'micos',
     libraryTarget: 'umd',
+    publicPath: './', // Ensure relative paths
   },
   mode: 'development',
   devServer: {
