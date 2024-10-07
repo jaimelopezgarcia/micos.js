@@ -1,6 +1,6 @@
 # micos - Minimal Constraint Solver
 
-micos (Minimalistic Constraint Solver) is a minimallistic accurate constraint-based physics solver designed for 2D simulations. 
+micos (Minimalistic Constraint Solver) is a minimallist accurate constraint-based physics solver designed for 2D simulations. 
 
 ![micos Demo](images/examples_micos.gif)
 
