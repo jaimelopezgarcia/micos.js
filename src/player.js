@@ -81,7 +81,11 @@ class Player {
         this.animationId = null;  // Store the animation ID to cancel the loop
         this.storeStory = storeStory;
         this.stateStory = [];
+
+        this.pauseOnHidden();
     }
+
+
 
     _playInit() {
         this.isInit = true;
@@ -172,13 +176,34 @@ class Player {
 
     pausePlay() {
         this.isPaused = !this.isPaused;
-
+        
+        if (this.animationId){
+        cancelAnimationFrame(this.animationId);
+        }
         // Resume the loop if it was paused
-        if (!this.isPaused && !this.animationId) {
+        if (!this.isPaused) {
             this._playInit();  // Restart the loop if unpaused
         }
     }
+
+    pauseOnHidden(){
+
+        document.addEventListener("visibilitychange", () => {
+             if (document.hidden){
+                 this.pausePlay();
+             }
+             else {
+
+                 this.pausePlay();
+             }
+
+        });
+
+    }
 }
+
+
+
 
 
 

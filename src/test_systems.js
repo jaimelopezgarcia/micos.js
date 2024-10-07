@@ -590,7 +590,7 @@ function rollingCircleSystemConfig(nparticles, radius,g, omega,mass = 1){
         let gravity = [g, [0,-1]];
         let time = 0;
         constraints_pin.push([0, [0,0], L]);
-        let dampingCoef = 0.005;
+        let dampingCoef = 0.03;
         for (let i = 0; i < nparticles; i++){
     
             // lets add a little angle perturbation to avoid singular configurations
