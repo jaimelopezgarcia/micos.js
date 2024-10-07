@@ -190,6 +190,7 @@ class Player {
 
         document.addEventListener("visibilitychange", () => {
              if (document.hidden){
+                console.warn("Document is hidden, pausing simulation");
                  this.pausePlay();
              }
              else {
